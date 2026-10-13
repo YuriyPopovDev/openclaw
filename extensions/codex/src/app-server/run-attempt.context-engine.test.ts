@@ -177,7 +177,7 @@ describe("runCodexAppServerAttempt context-engine lifecycle", () => {
     >[0];
     expect(assembleParams.sessionId).toBe("session-1");
     expect(assembleParams.sessionKey).toBe("agent:main:session-1");
-    expect(assembleParams.tokenBudget).toBe(321);
+    expect(assembleParams.tokenBudget).toBe(160);
     expect(assembleParams.citationsMode).toBe("on");
     expect(assembleParams.model).toBe("gpt-5.4-codex");
     expect(assembleParams.runtimeSettings).toMatchObject({
@@ -944,5 +944,52 @@ describe("runCodexAppServerAttempt context-engine lifecycle", () => {
     expect(promptHookMessages).toEqual(preassemblyMessages);
     expect(promptHookMessages.map((message) => message.role)).toEqual(["assistant", "user"]);
     expectRequestInputTextContains(harness, params.prompt);
+  });
+  it("uses the runtime token budget for large Codex context-engine projections", async () => {
+    const sessionFile = path.join(tempDir, "session.jsonl");
+    const workspaceDir = path.join(tempDir, "workspace");
+    const sessionManager = openFileBackedSessionManagerForTest(sessionFile, {
+      sessionId: "session-1",
+    });
+    const originalObjective = "Retain our original objective: durable-budget-goal-7319.";
+    const compactionSummary = "Completed investigation: durable-budget-summary-4827.";
+    const retainedEntryId = sessionManager.appendMessage(userMessage(originalObjective, 1));
+    sessionManager.appendCompaction(compactionSummary, retainedEntryId, 1_000);
+    const longContext = `large LCM context start ${"x".repeat(30_000)} LARGE_CONTEXT_END`;
+    const contextEngine = createContextEngine({
+      assemble: vi.fn(async ({ messages }) => ({
+        messages: [...messages, assistantMessage(longContext, 10)],
+        estimatedTokens: 10_000,
+        systemPromptAddition: "context-engine system",
+      })),
+    });
+    const appServerHarness = createStartedThreadHarness();
+    const attemptParams = createParams(sessionFile, workspaceDir);
+    attemptParams.contextEngine = contextEngine;
+    attemptParams.contextTokenBudget = 80_000;
+
+    const attemptRun = runCodexAppServerAttempt(attemptParams);
+    await appServerHarness.waitForMethod("turn/start");
+
+    const inputText = getRequestInputText(appServerHarness);
+    expect(contextEngine["assemble"]).toHaveBeenCalledWith(
+      expect.objectContaining({
+        tokenBudget: 60_000,
+      }),
+    );
+    expect(contextEngine["bootstrap"]).toHaveBeenCalledWith(
+      expect.objectContaining({
+        runtimeContext: expect.objectContaining({ tokenBudget: 80_000 }),
+      }),
+    );
+    expect(inputText.length).toBeGreaterThan(30_000);
+    expect(inputText).toContain(originalObjective);
+    expect(inputText).toContain(compactionSummary);
+    expect(inputText).toContain("large LCM context start");
+    expect(inputText).toContain("LARGE_CONTEXT_END");
+    expect(inputText).not.toContain("[truncated ");
+
+    await appServerHarness.completeTurn();
+    await attemptRun;
   });
 });

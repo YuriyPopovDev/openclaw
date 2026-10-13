@@ -511,10 +511,13 @@ export async function prepareEmbeddedRunRuntime(input: {
       contextTokenBudget: resolvedRuntimeModel.contextTokenBudget,
       authoredContextTokenCap: resolvedRuntimeModel.authoredContextTokenCap,
       contextWindowInfo: resolvedRuntimeModel.contextWindowInfo,
-      outerContextTokenMeta: {
-        contextTokens: resolvedRuntimeModel.contextTokenBudget,
-        contextTokensSource: resolvedRuntimeModel.contextTokensSource,
-      },
+      // A host assembly allowance does not attest native model context facts.
+      outerContextTokenMeta: nativeModelOwned
+        ? {}
+        : {
+            contextTokens: resolvedRuntimeModel.contextTokenBudget,
+            contextTokensSource: resolvedRuntimeModel.contextTokensSource,
+          },
       activePreparedAuthPlan: authState.apiKeyInfo
         ? {
             ...activePreparedAuthPlan,

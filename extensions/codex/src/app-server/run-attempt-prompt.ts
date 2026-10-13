@@ -56,16 +56,12 @@ export async function prepareCodexAttemptPrompt(context: CodexAttemptContext) {
     skillsInstructions,
     refreshableInstructions,
     promptState,
+    contextEngineAssemblyTokenBudget,
     codexContextProjectionMaxChars,
     codexContinuityProjectionMaxChars,
   } = context;
-  const {
-    connection,
-    runtimeParams,
-    effectiveContextTokenBudget,
-    effectiveRuntimeModelId,
-    effectiveRuntimeProviderId,
-  } = runtime;
+  const { connection, runtimeParams, effectiveRuntimeModelId, effectiveRuntimeProviderId } =
+    runtime;
   const {
     params,
     activeContextEngine,
@@ -195,7 +191,7 @@ export async function prepareCodexAttemptPrompt(context: CodexAttemptContext) {
         sessionId: runtimeParams.sessionId,
         sessionKey: contextSessionKey,
         messages: historyState.messages,
-        tokenBudget: effectiveContextTokenBudget,
+        tokenBudget: contextEngineAssemblyTokenBudget,
         availableTools: new Set(availableToolNames()),
         citationsMode: params.config?.memory?.citations,
         sandboxed: sandbox?.enabled === true,

@@ -17,7 +17,7 @@ import {
 } from "./attempt-context.js";
 import { buildCodexWorkspaceBootstrapContext } from "./attempt-workspace-context.js";
 import {
-  resolveCodexContextEngineProjectionMaxChars,
+  resolveCodexContextEngineBudget,
   resolveCodexContinuityProjectionMaxChars,
   type CodexProjectedContextRange,
 } from "./context-engine-projection.js";
@@ -226,9 +226,10 @@ export async function prepareCodexAttemptContext(
     // that later shrinks continuity history it did not measure.
     noEngineContinuityProjectionApplied: false,
   };
-  const codexContextProjectionMaxChars = resolveCodexContextEngineProjectionMaxChars({
-    contextTokenBudget: effectiveContextTokenBudget,
-  });
+  const {
+    assemblyTokenBudget: contextEngineAssemblyTokenBudget,
+    projectionMaxChars: codexContextProjectionMaxChars,
+  } = resolveCodexContextEngineBudget({ contextTokenBudget: effectiveContextTokenBudget });
   const codexContinuityProjectionMaxChars = resolveCodexContinuityProjectionMaxChars({
     contextTokenBudget: effectiveContextTokenBudget,
     calibration: connection.mutable.continuityCalibration,
@@ -249,6 +250,7 @@ export async function prepareCodexAttemptContext(
     skillsInstructions,
     refreshableInstructions,
     promptState,
+    contextEngineAssemblyTokenBudget,
     codexContextProjectionMaxChars,
     codexContinuityProjectionMaxChars,
   };

@@ -105,8 +105,27 @@ export function resolveEmbeddedRunEffectiveModel(
           provider: contextConfigProvider,
           model: params.modelId,
         });
+  // Host assembly allowance is separate from the authored native window cap.
+  // Pinned sessions retain their owner's context policy.
+  const callerBudget = params.runParams.contextTokenBudget;
+  const hostContextTokenBudget =
+    params.nativeModelOwned &&
+    params.agentHarnessId === "codex" &&
+    authoredContextTokenCap !== undefined &&
+    Number.isFinite(authoredContextTokenCap) &&
+    authoredContextTokenCap >= 1
+      ? Math.floor(
+          Math.min(
+            authoredContextTokenCap,
+            callerBudget !== undefined && Number.isFinite(callerBudget) && callerBudget >= 1
+              ? callerBudget
+              : authoredContextTokenCap,
+          ),
+        )
+      : undefined;
   return {
     ...resolved,
+    ...(hostContextTokenBudget === undefined ? {} : { contextTokenBudget: hostContextTokenBudget }),
     ...(authoredContextTokenCap === undefined ? {} : { authoredContextTokenCap }),
   };
 }

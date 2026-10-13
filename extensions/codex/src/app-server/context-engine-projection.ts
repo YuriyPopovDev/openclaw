@@ -162,20 +162,35 @@ export async function projectContextEngineAssemblyForCodex(params: {
   };
 }
 
+/** Resolve assembly and rendered limits from one admitted host allowance. */
+export function resolveCodexContextEngineBudget(params: {
+  contextTokenBudget?: number;
+  reserveTokens?: number;
+}): { assemblyTokenBudget?: number; projectionMaxChars: number } {
+  const contextTokenBudget = Math.floor(asFiniteNumber(params.contextTokenBudget) ?? 0);
+  if (contextTokenBudget <= 0) {
+    return { projectionMaxChars: DEFAULT_RENDERED_CONTEXT_CHARS };
+  }
+  const assemblyTokenBudget = Math.min(
+    MAX_RENDERED_CONTEXT_CHARS / APPROX_RENDERED_CHARS_PER_TOKEN,
+    resolveProjectionPromptBudgetTokens({
+      contextTokenBudget,
+      reserveTokens: params.reserveTokens,
+    }),
+  );
+  return {
+    assemblyTokenBudget,
+    projectionMaxChars: normalizeRenderedContextMaxChars(
+      assemblyTokenBudget * APPROX_RENDERED_CHARS_PER_TOKEN,
+    ),
+  };
+}
+
 export function resolveCodexContextEngineProjectionMaxChars(params: {
   contextTokenBudget?: number;
   reserveTokens?: number;
 }): number {
-  const contextTokenBudget = Math.floor(asFiniteNumber(params.contextTokenBudget) ?? 0);
-  if (contextTokenBudget <= 0) {
-    return DEFAULT_RENDERED_CONTEXT_CHARS;
-  }
-  const scaledChars =
-    resolveProjectionPromptBudgetTokens({
-      contextTokenBudget,
-      reserveTokens: params.reserveTokens,
-    }) * APPROX_RENDERED_CHARS_PER_TOKEN;
-  return normalizeRenderedContextMaxChars(scaledChars);
+  return resolveCodexContextEngineBudget(params).projectionMaxChars;
 }
 
 // Reserve half the window so no-engine continuity leaves room for later delta turns.

@@ -156,6 +156,70 @@ describe("selected route thinking metadata at runtime preparation", () => {
     await state.cleanup();
   });
 
+  it.each([false, true])(
+    "keeps a configured assembly allowance separate from native window metadata: native=%s",
+    async (isNativeModelOwned) => {
+      const config: OpenClawConfig = {
+        models: {
+          providers: {
+            openai: {
+              baseUrl: PLATFORM,
+              models: [{ ...platformModel, api: "openai-responses", contextTokens: 80_000 }],
+            },
+          },
+        },
+      };
+      const runId = `budget-${isNativeModelOwned}`;
+      const preparedBudgetRuntime: PreparedModelRuntimeSnapshot = {
+        ...preparedModelRuntime,
+        config,
+        modelCatalog: {
+          entries: isNativeModelOwned
+            ? [{ ...platformModel, api: "openai-responses", nativeRuntime: "codex" }]
+            : [],
+          routeVariants: [],
+        },
+      };
+      const preparedRunRuntime = await withPluginRuntimeGenerationScope(preparedBudgetRuntime, () =>
+        prepareEmbeddedRunRuntime({
+          assertCurrent: () => {},
+          runParams: {
+            runId,
+            admittedRunContext: createTestAdmittedRunContext(runId),
+            sessionId: "budget-session",
+            sessionKey: "agent:main:budget-session",
+            agentId: "main",
+            prompt: "Reply briefly.",
+            workspaceDir: root,
+            timeoutMs: 5_000,
+            config,
+            authProfileId: "openai:platform",
+            authProfileIdSource: "user",
+          },
+          provider: "openai",
+          modelId: MODEL_ID,
+          agentDir: preparedModelRuntime.agentDir,
+          workspaceDir: root,
+          globalLane: "test",
+          hookRunner: undefined,
+          hookContext: { sessionId: "budget-session", workspaceDir: root },
+          markStartupStage: () => {},
+          notifyExecutionPhase: () => {},
+          fallbackConfigured: false,
+          preparedModelRuntime: preparedBudgetRuntime,
+        }),
+      );
+      try {
+        expect(preparedRunRuntime.snapshot().contextTokenBudget).toBe(80_000);
+        expect(preparedRunRuntime.snapshot().outerContextTokenMeta).toEqual(
+          isNativeModelOwned ? {} : { contextTokens: 80_000 },
+        );
+      } finally {
+        preparedRunRuntime.stopRuntimeAuthRefreshTimer();
+      }
+    },
+  );
+
   it.each([
     ["platform", "absent"],
     ["platform", "platform"],
