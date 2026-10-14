@@ -156,9 +156,14 @@ describe("selected route thinking metadata at runtime preparation", () => {
     await state.cleanup();
   });
 
-  it.each([false, true])(
-    "keeps a configured assembly allowance separate from native window metadata: native=%s",
-    async (isNativeModelOwned) => {
+  it.each([
+    { isNativeModelOwned: false, callerBudget: undefined, expectedBudget: 80_000 },
+    { isNativeModelOwned: true, callerBudget: undefined, expectedBudget: 80_000 },
+    { isNativeModelOwned: true, callerBudget: 32_000, expectedBudget: 32_000 },
+    { isNativeModelOwned: true, callerBudget: 120_000, expectedBudget: 80_000 },
+  ])(
+    "keeps the assembly allowance separate from native metadata: native=$isNativeModelOwned, caller=$callerBudget",
+    async ({ isNativeModelOwned, callerBudget, expectedBudget }) => {
       const config: OpenClawConfig = {
         models: {
           providers: {
@@ -188,6 +193,7 @@ describe("selected route thinking metadata at runtime preparation", () => {
             admittedRunContext: createTestAdmittedRunContext(runId),
             sessionId: "budget-session",
             sessionKey: "agent:main:budget-session",
+            contextTokenBudget: callerBudget,
             agentId: "main",
             prompt: "Reply briefly.",
             workspaceDir: root,
@@ -210,7 +216,7 @@ describe("selected route thinking metadata at runtime preparation", () => {
         }),
       );
       try {
-        expect(preparedRunRuntime.snapshot().contextTokenBudget).toBe(80_000);
+        expect(preparedRunRuntime.snapshot().contextTokenBudget).toBe(expectedBudget);
         expect(preparedRunRuntime.snapshot().outerContextTokenMeta).toEqual(
           isNativeModelOwned ? {} : { contextTokens: 80_000 },
         );

@@ -996,4 +996,42 @@ describe("runCodexAppServerAttempt context-engine lifecycle", () => {
     await appServerHarness.completeTurn();
     await attemptRun;
   });
+
+  it("caps assembly before projecting a large native context window", async () => {
+    const sessionFile = path.join(tempDir, "session-large-window.jsonl");
+    const workspaceDir = path.join(tempDir, "workspace-large-window");
+    const contextEngine = createContextEngine({
+      assemble: vi.fn(async () => ({
+        messages: Array.from({ length: 12 }, (_, index) =>
+          assistantMessage(`history-${index} ${"x".repeat(90_000)} tail-${index}`, index + 1),
+        ),
+        estimatedTokens: 270_000,
+      })),
+    });
+    const harness = createStartedThreadHarness();
+    const params = createParams(sessionFile, workspaceDir);
+    params.contextEngine = contextEngine;
+    params.contextTokenBudget = 2_000_000;
+    params.prompt = "Keep the current request.";
+
+    const run = runCodexAppServerAttempt(params);
+    await harness.waitForMethod("turn/start");
+
+    expect(contextEngine["assemble"]).toHaveBeenCalledWith(
+      expect.objectContaining({ tokenBudget: 250_000 }),
+    );
+    const input = getRequestInputText(harness);
+    const history = input.match(/<conversation_context>\n([\s\S]*)\n<\/conversation_context>/)?.[1];
+    expect(history).toBeDefined();
+    expect(history!.length).toBeGreaterThan(990_000);
+    expect(history!.length).toBeLessThanOrEqual(1_000_000);
+    expect(history).toContain("[truncated ");
+    expect(history).not.toContain("history-0");
+    expect(history).toContain("tail-11");
+    expect(input).toContain(`Current user request:\n${params.prompt}`);
+    expect(input.length).toBeLessThanOrEqual(1 << 20);
+
+    await harness.completeTurn();
+    await run;
+  });
 });

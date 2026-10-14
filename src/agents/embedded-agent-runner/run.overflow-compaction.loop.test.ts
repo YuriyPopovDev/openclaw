@@ -429,7 +429,7 @@ describe("embedded run retry dispatch", () => {
             appServer: codex.resolveCodexPromptSnapshotAppServerOptions(),
           });
 
-        expect(attempt.contextTokenBudget).toBe(nativeModelOwned ? undefined : contextTokens);
+        expect(attempt.contextTokenBudget).toBe(contextTokens);
         for (const request of [threadStartParams, threadResumeParams]) {
           if (contextTokens === undefined) {
             expect(request.config).not.toHaveProperty("model_context_window");
