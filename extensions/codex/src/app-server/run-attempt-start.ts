@@ -83,6 +83,7 @@ export async function startCodexAttemptRuntime(resources: CodexAttemptResources)
       authority: connection.authority,
       attemptClientFactory,
       bindingStore,
+      replacementPredecessor: connection.mutable.replacementPredecessor,
       runtime: connection.options.runtime,
       appServer: pluginAppServer,
       pluginConfig,
