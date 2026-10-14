@@ -69,6 +69,7 @@ type PublicationRows = WeakMap<
   }
 >;
 type Publication = {
+  factsRevision: number;
   rows: PublicationRows;
   lists: Map<
     string,
@@ -90,7 +91,10 @@ function createSessionRowFactSharing<T extends GatewaySessionRow>() {
   return (sessions: T[]) => {
     type SharedFact = { fact: Partial<T>; rows: number[] };
     const candidates = new Map<string, SharedFact>();
+    const rows: GatewaySessionRow[] = [];
     sessions.forEach((row, index) => {
+      const { key, kind, updatedAt, sessionId, rowMode } = row;
+      rows.push({ key, kind, updatedAt, sessionId, rowMode });
       let facts = prepared.get(row);
       if (!facts) {
         facts = [];
@@ -109,12 +113,12 @@ function createSessionRowFactSharing<T extends GatewaySessionRow>() {
         }
         prepared.set(row, facts);
       }
-      for (const [key, fact] of facts) {
-        const candidate = candidates.get(key);
+      for (const [encoded, fact] of facts) {
+        const candidate = candidates.get(encoded);
         if (candidate) {
           candidate.rows.push(index);
         } else {
-          candidates.set(key, { fact, rows: [index] });
+          candidates.set(encoded, { fact, rows: [index] });
         }
       }
     });
@@ -122,6 +126,7 @@ function createSessionRowFactSharing<T extends GatewaySessionRow>() {
     const groups = new Map<string, SharedFact>();
     for (const candidate of candidates.values()) {
       if (candidate.rows.length < 2) {
+        Object.assign(rows[candidate.rows[0]!]!, candidate.fact);
         continue;
       }
       const key = candidate.rows.join(",");
@@ -132,17 +137,11 @@ function createSessionRowFactSharing<T extends GatewaySessionRow>() {
         groups.set(key, { fact: { ...candidate.fact }, rows: candidate.rows });
       }
     }
-    const rows = sessions.map((row) => ({ ...row }));
     const sharedFacts: Partial<T>[] = [];
     for (const group of groups.values()) {
       const reference = sharedFacts.push(group.fact) - 1;
-      const fields = Object.keys(group.fact);
       for (const index of group.rows) {
-        const row = rows[index]!;
-        for (const field of fields) {
-          Reflect.deleteProperty(row, field);
-        }
-        (row.sharedFacts ??= []).push(reference);
+        (rows[index]!.sharedFacts ??= []).push(reference);
       }
     }
     return { sessions: rows, sharedFacts };
@@ -192,16 +191,21 @@ export function prepareSessionRowPublication(
     if (!publication) {
       publication = {
         revision,
+        factsRevision: 0,
         rows: new WeakMap(),
         lists: new Map(),
       };
       publications.set(projection, publication);
-      const { lists } = publication;
+      const published = publication;
+      const { lists } = published;
       projection.onSelectionChange(() => lists.clear());
-      projection.onFactsChange(() => {
+      projection.onFactsChange((change) => {
+        published.factsRevision++;
         // Retire wire snapshots even when no reader returns after a publication or disposal.
         for (const list of lists.values()) {
-          list.rows = undefined;
+          if (change.kind === "reset" || list.rows?.some((row) => row.key === change.key)) {
+            list.rows = undefined;
+          }
         }
       });
     } else if (publication.revision !== revision) {
@@ -232,8 +236,14 @@ export function prepareProjectedSessionPresentation(
   const publicationRows = publicationState?.rows;
   const subagentRuns = rowContext.subagentRuns.atTime(now);
   const preparedRowContext = { ...rowContext, subagentRuns };
-  const runState = (key: string, entry: records.MaterializedRow["entry"]) =>
-    projectGatewaySessionRunState({ key, entry, now, rowContext: preparedRowContext });
+  const runState = (
+    key: string,
+    {
+      entry,
+      parsedKey,
+    }: Pick<records.MaterializedRow["materialized"]["source"], "entry" | "parsedKey">,
+  ) =>
+    projectGatewaySessionRunState({ key, entry, parsedKey, now, rowContext: preparedRowContext });
   const active = (key: string, entry: records.MaterializedRow["entry"], agentId: string) =>
     projectRun?.({
       requestedKey: key,
@@ -314,6 +324,7 @@ export function prepareProjectedSessionPresentation(
     const childOwnerSessionKeys = resolveSessionChildOwners({
       key: record.key,
       entry: record.entry,
+      parsedKey: record.materialized.source.parsedKey,
       now,
       subagentRuns,
     });
@@ -355,7 +366,7 @@ export function prepareProjectedSessionPresentation(
         sessionId: record.entry.sessionId,
         index: rowContext.projectedAgentRuns,
       });
-      const temporal = runState(record.key, record.entry);
+      const temporal = runState(record.key, record.materialized.source);
       const facts = [
         record.profileRevision,
         record.lastMessagePreview,
@@ -388,14 +399,16 @@ export function prepareProjectedSessionPresentation(
           : undefined,
         record.materialized.source.childLinks?.length,
       ];
-      for (const { key, entry } of record.materialized.source.childLinks ?? []) {
-        const childActive = runState(key, entry).fields.hasActiveSubagentRun;
+      for (const child of record.materialized.source.childLinks ?? []) {
+        const { key, entry, parsedKey } = child;
+        const childActive = runState(key, child).fields.hasActiveSubagentRun;
         facts.push(
           key,
           childActive,
           resolveSessionChildOwners({
             key,
             entry,
+            parsedKey,
             now,
             subagentRuns,
             hasActiveRun: childActive,
@@ -541,6 +554,13 @@ export function prepareProjectedSessionPresentation(
     return projectModels(row);
   };
   return {
+    get audienceKey() {
+      return JSON.stringify([
+        sharing.cacheKey,
+        presentFastMode("ultrafast"),
+        publicationState?.factsRevision,
+      ]);
+    },
     rowContext: preparedRowContext,
     active,
     sharing,
