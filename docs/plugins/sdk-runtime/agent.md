@@ -93,8 +93,9 @@ synchronous and does not access SQLite.
 
 The synchronous `open`, `openBounded`, `openDetachedBounded`, `openModelContext`,
 `setSessionTarget`, and `reloadPersistedTranscript` methods are deprecated
-third-party compatibility variants through the next Plugin SDK major. Runtime
-code should await their asynchronous counterparts.
+third-party compatibility variants. They will be removed in a later stable
+release after the deprecation period. Runtime code should await their
+asynchronous counterparts.
 
 ## Awaited transcript mutations
 
@@ -113,8 +114,8 @@ writing a leaf record by themselves. The synchronous `resetLeaf()` remains a
 supported in-memory operation.
 
 Synchronous persistence methods retain their immediate return values for
-third-party plugins and warn once per method per process. Their removal gate is
-the next Plugin SDK major. See the [migration table](/plugins/sdk-migration/how-to-migrate#await-session-transcript-persistence)
+third-party plugins and warn once per method per process. They will be removed
+in a later stable release after the deprecation period. See the [migration table](/plugins/sdk-migration/how-to-migrate#await-session-transcript-persistence)
 for every replacement, return value, and the additive extension and provider
 replay APIs. Transcript formats, schemas, and update behavior are unchanged.
 
@@ -190,16 +191,19 @@ keeps the full selected context. Async reads retain admission, anchor, and
 cancellation checks.
 
 For a temporary model-only view, callers may explicitly add
-`toolResultOverflow: "omit"` to `limits`. If the newest atomic tool frame would
-otherwise leave no fitting context, recovery replaces only the tool-result bodies
-needed to fit with omission notices, before loading those bodies from SQLite.
-Each notice identifies the tool, call, and original projected event size. Recovery
-retains the latest historical user request and complete owned call/result frames.
-Unselected result bodies and tool-call arguments remain intact.
+`toolResultOverflow: "omit"` to `limits`. Under byte pressure, the reader replaces
+tool-result bodies with omission notices before selecting a bounded suffix, so
+earlier goals and constraints can remain in context. It omits only bodies whose
+savings help the view fit, before loading those bodies from SQLite. Each notice
+identifies the tool, call, and original projected event size. If dropping a prefix
+makes retained bodies affordable again, the reader restores the newest ones that
+fit. Tool-call arguments and owned call/result frames remain intact.
 
 This is a lossy model view, not a full-fidelity history API. It does not rewrite
-stored transcripts or change evidence and fork readers. The same byte/event
-limits, required boundaries, and tool-result ownership checks still apply. Reads
+stored transcripts or change evidence and fork readers. Preferring earlier
+requests over result bodies changes retention and may change reusable prompt
+prefixes. The same byte/event limits, required boundaries, and tool-result
+ownership checks still apply. Reads
 still fail if required user messages, call arguments, summaries, or event counts
 cannot fit, or result ownership is ambiguous. Omitting `toolResultOverflow`
 preserves strict bounded-read behavior.

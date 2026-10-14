@@ -93,6 +93,53 @@ expensive. Matching database size alone does not prove production equivalence.
 Compare a small fixture and the default fixture on the same checkout and host;
 record counts, database bytes, exact revision and request shape with the timings.
 
+## Measure transcript broadcast fanout
+
+With runtime artifacts built on the authorized benchmark host, seed a fixture
+without `--launch`, then run:
+
+```sh
+node --import ./scripts/tsx.mjs scripts/perf/transcript-broadcast-measure.ts \
+  --state-dir /path/to/team-shape --clients 60 --runs 20 --rounds 5 --chunks 500
+```
+
+The driver starts its own loopback Gateway and a credential-free SSE model
+fixture on ports 41033 and 41034. It creates one shared parent and 20 shared child
+sessions through `sessions.create`, then resets their histories through
+`sessions.reset` before each comparison. The full seeded inventory remains;
+these small sessions avoid large-history compaction and retained-run announcement
+work obscuring broadcast costs. Standard memory search is disabled and both main
+and child run concurrency match `--runs`. Every client subscribes to session-list
+events and messages for the same 20 children. Actual `agent` and `agent.wait` RPCs
+exercise the full turn and transcript publication paths;
+each synthetic model answer streams deltas paced 10 ms apart (100 by default;
+the example uses 500 to sustain overlap). Each warmup/measured cohort holds its
+primary model responses until all requested, uniquely marked turns arrive, with
+a 45-second admission timeout, then streams their answers together. Parent
+announcements and utility requests receive one short acknowledgement and are
+counted separately. A fixed 10-second post-readiness delay allows retained-run
+startup recovery to settle before setup. One concurrent round
+warms the Gateway before five measured rounds. `--port`, `--mock-port`,
+`--chunks`, `--clients`, `--runs`, and `--rounds` adjust the workload.
+Warmup and each measured round drain until no model streams remain and all
+subscriber events have been quiet for one second, with a 15-second timeout.
+
+Results under the fixture's `broadcast-measure-*` directory include Gateway
+logs, event counts, peak concurrent model streams, and CPU snapshots from the
+Gateway's private benchmark IPC preload. Main-thread CPU excludes the driver
+and model fixture. Port conflicts reject before RPCs; readiness requires the
+owned Gateway's bind-success log and live IPC. Lost clients, event-sequence gaps,
+incomplete per-client transcript/list fanout, or an incorrect primary request or
+overlap count fail the measurement. `mainThreadMsPerSessionEvent` divides by
+the validated `session.message` plus `sessions.changed` copies per client;
+other event counts remain in the report. It includes all Gateway work during the
+round, including the drain interval, so it does not isolate broadcast CPU and
+CPU per second includes that quiet interval. Compare the same event counts and
+concurrency on both revisions, and report the actual database size. For a roughly 5 GiB fixture, seed with
+`--transcript-mib 1500` rather than the 64 MiB logical-text default. The driver
+stops its Gateway and model fixture on completion or interruption and retains
+synthetic state for inspection. Never target a running Gateway's state.
+
 To start an existing fixture without regenerating it, set `HOME` and
 `OPENCLAW_HOME` to `<state-dir>/home`, `OPENCLAW_STATE_DIR` to `<state-dir>`,
 `OPENCLAW_CONFIG_PATH` to `<state-dir>/openclaw.json`, and `TMPDIR` to
@@ -119,3 +166,59 @@ Use loopback ports at least 40000. Never read/copy production databases or touch
 production services. Stop your own Gateway, then remove your sandbox after
 recording results. Local validation is limited to changed-file format/lint and
 focused tests; PR CI owns broad gates.
+
+## Allocated bytes per RPC or turn
+
+Use the same owned Gateway driver with `--allocations` and a named `--scenario`:
+
+```sh
+node --import ./scripts/tsx.mjs scripts/perf/transcript-broadcast-measure.ts \
+  --state-dir /path/to/team-shape --allocations --scenario sessions.list \
+  --clients 1 --runs 1 --operations 100 --limit 100 --rounds 5 \
+  --revision <measured-commit-sha>
+```
+
+Supported scenarios:
+
+| Scenario               | One measured operation                                                                                     |
+| ---------------------- | ---------------------------------------------------------------------------------------------------------- |
+| `sessions.list`        | One compact sidebar page RPC, `archived=all`, `--limit` rows                                               |
+| `subscribe`            | One `sessions.subscribe` snapshot registration/refresh RPC on the sender, with the same page shape as list |
+| `chat.send`            | One completed turn: synthetic read-tool call, then paced streaming answer; one client and one run          |
+| `transcript-broadcast` | One completed `agent` turn, streamed to `--clients` subscribers; `--runs` concurrent turns per round       |
+| `plugins.reload`       | One live reload of a synthetic no-op plugin through the lifecycle RPC                                      |
+
+RPC scenarios use `--operations` per round. Turn scenarios use `--runs` (forced
+to one for `chat.send`); `--chunks` controls streamed answer size. `plugins.reload`
+defaults to one operation per round; other RPC scenarios default to 100. Count
+the warmup when choosing reload batches: the admin RPC allows 30 calls per minute.
+Setup, startup
+recovery, subscription establishment, and one warmup round are outside capture.
+Each measured window includes completion and event drain, including the one-second
+quiet interval. The fixture inventory and request/client/run counts are recorded
+in `result.json`; the driver prints each sample as JSON and a short table.
+Raw `.heapprofile` files and numeric diagnostics remain alongside the report.
+Use a freshly generated fixture on each revision and compare multiple rounds.
+The driver adds a small parent/child session set; those sessions are included in
+list measurements. For production-shaped database size use `--transcript-mib 1500`
+when generating the fixture and record its actual database bytes.
+
+The existing private benchmark IPC preload samples the **Gateway main isolate**,
+with both `includeObjectsCollectedByMajorGC` and
+`includeObjectsCollectedByMinorGC` enabled and a 32 KiB average interval. V8's
+node `selfSize` totals estimate allocated bytes, including objects collected
+during capture. `estimatedAllocatedBytesPerOperation` divides that total by the
+validated completed operation count. Top sites include up to eight caller frames
+in entry-to-leaf order. These are statistical estimates: small batches can have
+substantial sampling noise. Run an idle comparison if background allocation is
+material; the driver does not subtract it or silently present heap deltas as churn.
+
+`gcMs`, `gcCount`, and `gcMsPerOperation` come from the main isolate's GC performance
+entries. Heap-used and RSS deltas are separate context fields. Worker allocations,
+worker GC, external buffers, and driver/model-fixture allocation are **not** in
+these per-operation estimates. Process CPU and RSS include workers; main-thread
+CPU is reported separately. Profiling adds CPU and memory overhead, so compare
+with the same sampling settings. No profiling runs when `--allocations` is absent.
+For live operator attribution, `diagnostics.heapProfile` accepts
+`{ "durationMs": 10000, "includeCollected": true }` with the existing admin
+scope and 30-second churn cap; it remains a timed sample, not an RPC denominator.

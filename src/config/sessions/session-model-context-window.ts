@@ -10,51 +10,6 @@ export type ModelContextRequest = {
   toolResultOmission?: string;
 };
 
-/** Omit only bodies whose savings help the bounded view retain useful history. */
-function selectToolResultOmissions(
-  requests: readonly ModelContextRequest[],
-  sizes: Map<ContextEntry, number>,
-  readSizes: (requests: readonly ModelContextRequest[]) => Map<ContextEntry, number>,
-  maxBytes: number,
-): Map<ContextEntry, ModelContextRequest> {
-  let bytes = [...sizes.values()].reduce((total, size) => total + size, 0);
-  const replacements = new Map<ContextEntry, ModelContextRequest>();
-  if (bytes <= maxBytes) {
-    return replacements;
-  }
-  const omissions = requests.flatMap((request) => {
-    const { entry } = request;
-    if (entry.type !== "message" || entry.message.role !== "toolResult") {
-      return [];
-    }
-    const message = entry.message;
-    return [
-      {
-        ...request,
-        toolResultOmission:
-          `Tool result body omitted from this bounded context: ${JSON.stringify(message.toolName)} ` +
-          `(call ${JSON.stringify(message.toolCallId)}), original model-context event ${sizes.get(entry)!} bytes. ` +
-          "The full result remains in the session transcript. Do not infer its outcome or repeat the operation from this notice.",
-      },
-    ];
-  });
-  const omittedSizes = readSizes(omissions);
-  const savings = (request: ModelContextRequest) =>
-    sizes.get(request.entry)! - omittedSizes.get(request.entry)!;
-  for (const omission of omissions.toSorted((a, b) => savings(b) - savings(a))) {
-    if (bytes <= maxBytes) {
-      break;
-    }
-    const saved = savings(omission);
-    if (saved > 0) {
-      replacements.set(omission.entry, omission);
-      sizes.set(omission.entry, omittedSizes.get(omission.entry)!);
-      bytes -= saved;
-    }
-  }
-  return replacements;
-}
-
 /** Select an owned suffix before SQLite payloads can enter JavaScript or cross a worker. */
 export function selectBoundedModelRequests(
   requests: ModelContextRequest[],
@@ -73,13 +28,46 @@ export function selectBoundedModelRequests(
   if (bytes > limits.maxBytes || events > limits.maxEvents) {
     throw new RangeError("Required session context boundary exceeds the model-context limit");
   }
-  const originalSizes = new Map(sizes);
-  const replacements =
-    limits.toolResultOverflow === "omit"
-      ? selectToolResultOmissions(sizingCandidates, sizes, readSizes, limits.maxBytes)
-      : new Map<ContextEntry, ModelContextRequest>();
+  const replacements = new Map<
+    ContextEntry,
+    { request: ModelContextRequest; savedBytes: number }
+  >();
+  let candidateBytes = [...sizes.values()].reduce((total, size) => total + size, 0);
+  // Prefer earlier requests over result bodies before choosing the bounded suffix.
+  if (limits.toolResultOverflow === "omit" && candidateBytes > limits.maxBytes) {
+    const omissions = sizingCandidates.flatMap((request) => {
+      const { entry } = request;
+      if (entry.type !== "message" || entry.message.role !== "toolResult") {
+        return [];
+      }
+      const message = entry.message;
+      return [
+        {
+          ...request,
+          toolResultOmission:
+            `Tool result body omitted from this bounded context: ${JSON.stringify(message.toolName)} ` +
+            `(call ${JSON.stringify(message.toolCallId)}), original model-context event ${sizes.get(entry)!} bytes. ` +
+            "The full result remains in the session transcript. Do not infer its outcome or repeat the operation from this notice.",
+        },
+      ];
+    });
+    const omittedSizes = readSizes(omissions);
+    const savings = (request: ModelContextRequest) =>
+      sizes.get(request.entry)! - omittedSizes.get(request.entry)!;
+    for (const omission of omissions.toSorted((a, b) => savings(b) - savings(a))) {
+      if (candidateBytes <= limits.maxBytes) {
+        break;
+      }
+      const saved = savings(omission);
+      if (saved > 0) {
+        replacements.set(omission.entry, { request: omission, savedBytes: saved });
+        sizes.set(omission.entry, omittedSizes.get(omission.entry)!);
+        candidateBytes -= saved;
+      }
+    }
+  }
   const capacity = limits.maxBytes - bytes;
-  let totalBytes = [...sizes.values()].reduce((total, size) => total + size, 0) - bytes;
+  let totalBytes = candidateBytes - bytes;
   const byteLimited = totalBytes > capacity;
   let byteLimit = limits.maxBytes;
   if (byteLimited) {
@@ -106,7 +94,7 @@ export function selectBoundedModelRequests(
     }
   }
   if (cut === 0) {
-    return requests.map((request) => replacements.get(request.entry) ?? request);
+    return requests.map((request) => replacements.get(request.entry)?.request ?? request);
   }
   const turnStarts = byteLimited
     ? candidates.flatMap(({ entry }, index) =>
@@ -157,49 +145,16 @@ export function selectBoundedModelRequests(
     retainedBytes += sizes.get(request.entry)!;
   }
   for (const request of selected.toReversed()) {
-    if (!replacements.has(request.entry)) {
+    const replacement = replacements.get(request.entry);
+    if (!replacement) {
       continue;
     }
-    const restoredBytes = originalSizes.get(request.entry)! - sizes.get(request.entry)!;
-    if (retainedBytes + restoredBytes <= limits.maxBytes) {
+    if (retainedBytes + replacement.savedBytes <= limits.maxBytes) {
       replacements.delete(request.entry);
-      retainedBytes += restoredBytes;
+      retainedBytes += replacement.savedBytes;
     }
   }
-  selected = selected.map((request) => replacements.get(request.entry) ?? request);
-  if (selected.length === 0 && limits.toolResultOverflow === "omit") {
-    // Retain the newest historical request and close its suffix over displaced results.
-    // The currently admitted user is supplied separately by native runtime callers.
-    let start = candidates.findLastIndex(
-      ({ entry }) => entry.type === "message" && entry.message.role === "user",
-    );
-    if (start < 0) {
-      start = candidates.length - 1;
-    }
-    for (const frame of original.frames.toReversed()) {
-      if (
-        frame.occurrences.some(
-          ({ sourceResult }) => sourceResult && positions.get(sourceResult)! >= start,
-        )
-      ) {
-        start = Math.min(start, positions.get(frame.assistant)!);
-      }
-    }
-    const required = candidates.slice(start);
-    if (required.length + (boundary ? 1 : 0) <= limits.maxEvents) {
-      const requiredSizes = readSizes(boundary ? [boundary, ...required] : required);
-      const requiredReplacements = selectToolResultOmissions(
-        required,
-        requiredSizes,
-        readSizes,
-        limits.maxBytes,
-      );
-      const requiredBytes = [...requiredSizes.values()].reduce((total, size) => total + size, 0);
-      if (requiredBytes <= limits.maxBytes) {
-        selected = required.map((request) => requiredReplacements.get(request.entry) ?? request);
-      }
-    }
-  }
+  selected = selected.map((request) => replacements.get(request.entry)?.request ?? request);
   if (selected.length === 0) {
     throw new RangeError(
       "The latest messages exceed this session's context limit. Start a new session with a brief summary to continue.",

@@ -960,6 +960,9 @@ const postgresConformancePaths = [
   "src/state/openclaw-state-snapshot-sanitizer.ts",
   "scripts/generate-postgres-schema.mts",
   "scripts/lib/postgres-schema-catalog.mts",
+  "scripts/lib/postgres-schema-triggers.mts",
+  "scripts/lib/postgres-agent-conformance.mts",
+  "src/state/openclaw-agent-schema.sql",
   "test/scripts/generate-postgres-schema.test.ts",
   "src/state/*schema*",
   "src/state/openclaw-state-db-contract.ts",
@@ -1004,6 +1007,12 @@ const runQaSmokeCi =
   runNodeFull &&
   changedScopeHasQaImpact &&
   (!frozenTarget || existsSync("extensions/qa-lab/src/ci-smoke-plan.ts"));
+const nodeWorkerE2eShards =
+  runNodeFull &&
+  !runtimePullRequest &&
+  typeof changedNodeTestPlan.createNodeWorkerE2eTestShards === "function"
+    ? changedNodeTestPlan.createNodeWorkerE2eTestShards()
+    : [];
 const rawNodeTestShards = runNodeFull
   ? changedNodeTestShards
     ? changedNodeTestShards
@@ -1020,9 +1029,10 @@ const rawNodeTestShards = runNodeFull
           // the complete compact inventory within its 77-row main-tier cap.
           compact: compactPlanMode !== undefined,
           compactMode: mainValidation ? "pull-request" : compactPlanMode,
-          compactNodeJobCap: nodeMatrixLimit,
+          compactNodeJobCap: nodeMatrixLimit - nodeWorkerE2eShards.length,
           runnerBackend: nodeRunnerBackend,
         }),
+        ...nodeWorkerE2eShards,
       ]
   : [];
 if (
