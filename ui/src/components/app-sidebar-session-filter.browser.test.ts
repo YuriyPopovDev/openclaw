@@ -19,7 +19,7 @@ import "@awesome.me/webawesome/dist/styles/themes/default.css";
 import "../test-helpers/load-styles.ts";
 import "../styles/settings-controls.css";
 import "../styles/settings-native-controls.css";
-import "./app-sidebar.ts";
+import "./app-sidebar.tsx";
 
 setupSidebarTest();
 
@@ -144,7 +144,12 @@ describe.runIf("__vitest_browser__" in globalThis)("sidebar session filter popov
       await userEvent.keyboard("{Escape}");
       await expect.element(search).toHaveValue("");
       await expect.poll(() => ownerOptions(sidebar)).toHaveLength(4);
+      const ownersSurface = search.element().closest(".picker-select__menu")!;
+      const ownersHidden = new Promise<void>((resolve) => {
+        ownersSurface.addEventListener("overlay-after-hide", () => resolve(), { once: true });
+      });
       await userEvent.keyboard("{Escape}");
+      await ownersHidden;
       await expect.element(owners).toHaveFocus();
       await expect.poll(() => occlusion).toEqual([false, true, false]);
       await trigger.click();
@@ -271,7 +276,7 @@ describe.runIf("__vitest_browser__" in globalThis)("sidebar session filter popov
     await expect.element(panel).toBeVisible();
     await Promise.all(panel.getAnimations().map((animation) => animation.finished));
     expect(panel.getAttribute("aria-modal")).toBe("true");
-    expect(sidebar.querySelector(".sidebar-session-sort-menu wa-popup")).toBeNull();
+    expect(panel.matches(":popover-open")).toBe(true);
     const sheet = panel.getBoundingClientRect();
     expect(sheet.left).toBe(0);
     expect(sheet.width).toBe(innerWidth);

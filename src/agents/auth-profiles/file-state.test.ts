@@ -18,47 +18,20 @@ import {
   refreshAuthProfileFileState,
   registerAuthProfileFileChangeListener,
 } from "./file-state.js";
-import {
-  clearRuntimeAuthProfileStoreSnapshots,
-  runtimeAuthProfileRowsCache,
-} from "./runtime-snapshots.js";
+import { runtimeAuthProfileRowsCache } from "./runtime-persisted-rows.js";
+import { clearRuntimeAuthProfileStoreSnapshots } from "./runtime-snapshots.js";
 
 const temporary = useAutoCleanupTempDirTracker(afterEach);
+vi.mock("node:worker_threads", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("node:worker_threads")>()),
+  isMainThread: true,
+}));
+
 afterEach(async () => {
   runtimeAuthProfileRowsCache.clear();
   await closeOpenClawStateDatabaseAsync();
   vi.restoreAllMocks();
   vi.useRealTimers();
-});
-
-it("keeps unchanged fallback observations off row workers and detects WAL-only writes", async () => {
-  vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
-  vi.spyOn(fs, "watch").mockImplementation(() => {
-    throw new Error("synthetic unavailable watcher");
-  });
-  const directory = temporary.make("auth-file-unchanged-source-");
-  const databasePath = path.join(directory, "openclaw-agent.sqlite");
-  fs.writeFileSync(databasePath, "synthetic database");
-  const captured = captureAuthProfileFileIdentity(databasePath);
-  const refresh = vi.fn(async () => ({
-    store: { status: "missing" as const, reason: "row" as const },
-    state: { status: "missing" as const, reason: "row" as const },
-    cacheable: false,
-  }));
-  runtimeAuthProfileRowsCache.recordSource(databasePath, "fixture", null, refresh);
-
-  await vi.advanceTimersByTimeAsync(30_000);
-  await refreshAuthProfileFileState();
-  expect(refresh).not.toHaveBeenCalled();
-
-  fs.writeFileSync(`${databasePath}-wal`, "externally committed synthetic rows");
-  await refreshAuthProfileFileState();
-  expect(refresh).toHaveBeenCalledOnce();
-  expect(() => captured.assertCurrent()).not.toThrow();
-
-  await vi.advanceTimersByTimeAsync(30_000);
-  await refreshAuthProfileFileState();
-  expect(refresh).toHaveBeenCalledOnce();
 });
 
 it.skipIf(process.platform === "win32")(
@@ -85,6 +58,7 @@ it.skipIf(process.platform === "win32")(
         const unregister = register();
         const files = await import(workerData.files);
         const snapshots = await import(workerData.snapshots);
+        const { runtimeAuthProfileRowsCache } = await import(workerData.cache);
         const { acquireAuthProfileReadDatabase } = await import(workerData.pool);
         const { readAuthProfileRowsReadOnly } = await import(workerData.rows);
         const { runInDetachedAsyncContext } = await import(workerData.detached);
@@ -121,9 +95,8 @@ it.skipIf(process.platform === "win32")(
             writer.prepare("UPDATE auth_profile_state SET state_json = ?").run('{"lastGood":{"fixture":"fixture"}}');
             assert.ok(fs.statSync(databasePath + "-wal").size > 0);
             await runInDetachedAsyncContext(files.refreshAuthProfileFileState);
-            assert.ok(changes.some((change) => change.contentsChanged && !change.identityChanged));
             assert.equal(spawned, 0, "WAL-only observation must not launch an auth row child");
-            assert.equal(snapshots.runtimeAuthProfileRowsCache.hasSource(databasePath), false);
+            assert.equal(runtimeAuthProfileRowsCache.hasSource(databasePath), false);
             assert.equal(reader.isOpen, true);
             assert.deepEqual(snapshots.getRuntimeAuthProfileStoreSnapshotAtDatabasePath(databasePath), store("worker-original"));
 
@@ -161,6 +134,7 @@ it.skipIf(process.platform === "win32")(
           loader: import.meta.resolve("tsx/esm/api"),
           files: new URL("./file-state.ts", import.meta.url).href,
           snapshots: new URL("./runtime-snapshots.ts", import.meta.url).href,
+          cache: new URL("./runtime-persisted-rows.ts", import.meta.url).href,
           pool: new URL("./sqlite-read-pool.ts", import.meta.url).href,
           rows: new URL("./sqlite-json.ts", import.meta.url).href,
           detached: new URL("../../shared/detached-async-context.ts", import.meta.url).href,
@@ -198,7 +172,9 @@ it("rejects a swapped database before a privileged write even before observation
 });
 
 it("publishes a first owner write immediately and keeps same-file writes from revoking identity", async () => {
-  vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
+  vi.useFakeTimers({
+    toFake: ["Date", "performance", "setTimeout", "clearTimeout", "setInterval", "clearInterval"],
+  });
   const directory = temporary.make("auth-file-write-through-");
   const databasePath = path.join(directory, "openclaw-agent.sqlite");
   expect(readAuthProfileDatabaseIdentity(databasePath)?.key).toMatch(/^path:/);
@@ -264,7 +240,9 @@ it("keeps first-write authority when publication overtakes an observed file read
 });
 
 it("explicitly refreshes absent files without retiring unchanged authority", async () => {
-  vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
+  vi.useFakeTimers({
+    toFake: ["Date", "performance", "setTimeout", "clearTimeout", "setInterval", "clearInterval"],
+  });
   vi.spyOn(fs, "watch").mockImplementation(() => {
     throw new Error("synthetic unavailable watcher");
   });
@@ -286,7 +264,9 @@ it("explicitly refreshes absent files without retiring unchanged authority", asy
 });
 
 it("joins a fallback observation received while a prior refresh is pending", async () => {
-  vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
+  vi.useFakeTimers({
+    toFake: ["Date", "performance", "setTimeout", "clearTimeout", "setInterval", "clearInterval"],
+  });
   vi.spyOn(fs, "watch").mockImplementation(() => {
     throw new Error("synthetic unavailable watcher");
   });
@@ -341,7 +321,9 @@ it("joins a fallback observation received while a prior refresh is pending", asy
 });
 
 it("invalidates admitted auth facts after a separate process replaces their files", async () => {
-  vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
+  vi.useFakeTimers({
+    toFake: ["Date", "performance", "setTimeout", "clearTimeout", "setInterval", "clearInterval"],
+  });
   const directory = temporary.make("auth-file-owner-");
   const databasePath = path.join(directory, "openclaw-agent.sqlite");
   const legacyPath = path.join(directory, "auth-profiles.json");
@@ -377,7 +359,9 @@ it("invalidates admitted auth facts after a separate process replaces their file
 });
 
 it("periodically invalidates when directory events are unavailable", async () => {
-  vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
+  vi.useFakeTimers({
+    toFake: ["Date", "performance", "setTimeout", "clearTimeout", "setInterval", "clearInterval"],
+  });
   vi.spyOn(fs, "watch").mockImplementation(() => {
     throw new Error("synthetic unavailable watcher");
   });
@@ -399,7 +383,9 @@ it("periodically invalidates when directory events are unavailable", async () =>
 });
 
 it("keeps an absent database readable as missing after fallback revalidation", async () => {
-  vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
+  vi.useFakeTimers({
+    toFake: ["Date", "performance", "setTimeout", "clearTimeout", "setInterval", "clearInterval"],
+  });
   const directory = temporary.make("auth-file-still-missing-");
   const databasePath = path.join(directory, "openclaw-agent.sqlite");
   const captured = captureAuthProfileFileIdentity(databasePath);

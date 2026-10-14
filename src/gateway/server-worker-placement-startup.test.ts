@@ -47,6 +47,12 @@ function placementStoreDefaults(
     workspaceResultInstanceId: () => "gateway-test",
     getAsync: async (sessionId: string) =>
       readPlacements().find((placement) => placement.sessionId === sessionId),
+    getManyAsync: async (sessionIds: readonly string[]) =>
+      new Map(
+        readPlacements()
+          .filter((placement) => sessionIds.includes(placement.sessionId))
+          .map((placement) => [placement.sessionId, placement]),
+      ),
     listAsync: async () => readPlacements(),
     retireSessionPlacementAsync: vi.fn(async () => {}),
     pruneOrphanedWorkspaceReconciliations: async () => [],
@@ -122,6 +128,7 @@ describe("worker placement startup health lifetime", () => {
       subscribeMachineShapeChanged: vi.fn(() => vi.fn()),
       installReconcileEnvironmentGuard: vi.fn(() => vi.fn()),
       start: vi.fn(),
+      beginClose: vi.fn(),
       stop: vi.fn().mockResolvedValue(undefined),
     };
     const warn = vi.fn();
@@ -219,6 +226,7 @@ describe("worker placement startup health lifetime", () => {
         subscribeMachineShapeChanged: vi.fn(() => vi.fn()),
         installReconcileEnvironmentGuard: vi.fn(() => vi.fn()),
         start: vi.fn(),
+        beginClose: vi.fn(),
         stop: vi.fn().mockResolvedValue(undefined),
       };
       const runtime = createGatewayWorkerPlacementRuntime({
@@ -308,7 +316,7 @@ describe("worker placement startup health lifetime", () => {
       installReconcileEnvironmentGuard: vi.fn(() => vi.fn()),
       start: vi.fn(),
       stop: vi.fn().mockResolvedValue(undefined),
-      stopNodeEnrollmentWaits: vi.fn(),
+      beginClose: vi.fn(),
     };
     const runtime = createGatewayWorkerPlacementRuntime({
       initialPlacements: [],
@@ -349,7 +357,7 @@ describe("worker placement startup health lifetime", () => {
 
       await Promise.resolve();
       expect(repeatedStop).toBe(stopping);
-      expect(environments.stopNodeEnrollmentWaits).toHaveBeenCalledOnce();
+      expect(environments.beginClose).toHaveBeenCalledOnce();
       expect(environments.stop).not.toHaveBeenCalled();
       evidence.resolve("absent");
       await Promise.all([stopping, repeatedStop]);
@@ -375,6 +383,7 @@ describe("worker placement startup health lifetime", () => {
       subscribeMachineShapeChanged: vi.fn(() => vi.fn()),
       installReconcileEnvironmentGuard: vi.fn(() => vi.fn()),
       start: vi.fn(),
+      beginClose: vi.fn(),
       stop: vi.fn().mockRejectedValueOnce(stopError).mockResolvedValueOnce(undefined),
     };
     const runtime = createGatewayWorkerPlacementRuntime({
@@ -469,6 +478,7 @@ describe("worker placement startup health lifetime", () => {
                 return vi.fn();
               }),
               start: vi.fn(),
+              beginClose: vi.fn(),
               stop: vi.fn().mockResolvedValue(undefined),
             };
             const runtime = createGatewayWorkerPlacementRuntime({
@@ -588,11 +598,12 @@ describe("worker placement startup health lifetime", () => {
       }),
       start: vi.fn(),
       isStopping: () => environmentStopping,
-      stopNodeEnrollmentWaits: vi.fn(() => {
+      beginClose: vi.fn(() => {
         expect(dispatchOptions.isShuttingDown?.()).toBe(true);
         expect(environmentStopping).toBe(false);
         expect(environments.stop).not.toHaveBeenCalled();
-        events.push("enrollment:cancel");
+        environmentStopping = true;
+        events.push("environments:begin-close");
       }),
       stop: vi.fn(async () => {
         environmentStopping = true;
@@ -662,7 +673,7 @@ describe("worker placement startup health lifetime", () => {
     await Promise.all([guardedRecovery, stopping]);
     expect(events).toEqual([
       "recovery:start",
-      "enrollment:cancel",
+      "environments:begin-close",
       "environments:stop",
       "reconcile:core",
       "recovery:end",
@@ -827,7 +838,7 @@ describe("worker placement startup recovery authority", () => {
                 await moveDestinationMocks.resolveCanonicalSession.withImplementation(
                   () => ({
                     sessionId: "session-replaced",
-                    worktree: { id: "worktree-recovery" },
+                    worktree: { id: "worktree-recovery", branch: "fixture", repoRoot: root },
                   }),
                   async () => {
                     await expect(
