@@ -670,6 +670,7 @@ async function preparePluginHarnessParams(
     pluginHarnessToolPolicySafeDeniedTools:
       policies.safeDeniedToolNames.length > 0 ? policies.safeDeniedToolNames : undefined,
     pluginHarnessToolPolicyRestricted: policies.toolPolicyRestricted,
+    pluginHarnessToolPolicyScope: policies.toolPolicyScope,
   };
   const effectiveParams = nativePermissionsConsented
     ? policyParams

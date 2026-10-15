@@ -51,6 +51,7 @@ import {
   throwIfCodexThreadLifecycleAborted,
   tryReuseCodexLiveThread,
 } from "./thread-lifecycle-warm.js";
+import { isTransientCodexRestrictedTurn } from "./thread-restricted-resume.js";
 import { materializePendingSupervisionBranch } from "./thread-supervision.js";
 
 export async function startOrResumeThread(
@@ -247,9 +248,21 @@ export async function startOrResumeThread(
     const transientDelegationRestriction = params.params.delegationCapability === "report_only";
     const persistentWebSearchRestriction =
       params.webSearchAllowed === false && params.persistentWebSearchAllowed === false;
-    const transientNativeToolRestriction =
-      params.nativeCodeModeEnabled === false && !persistentWebSearchRestriction;
-    const transientWebSearchRestriction = isTransientWebSearchRestriction(params);
+    const transientNativeToolRestriction = isTransientCodexRestrictedTurn(
+      params.params,
+      hostSystemAgentActive,
+    );
+    const transientWebSearchRestriction =
+      !ringZeroActive && isTransientWebSearchRestriction(params);
+    // A temporary first turn must not establish the conversation's durable policy.
+    let preserveExistingBinding =
+      transientNativeToolRestriction ||
+      transientWebSearchRestriction ||
+      transientDelegationRestriction ||
+      (!ringZeroActive &&
+        params.nativeProviderWebSearchSupport === "unknown" &&
+        !binding?.threadId);
+    let restrictedResumeCandidate = false;
     if (binding?.pendingResumeConfiguration) {
       const resumed = await resumePendingCodexThread(params, {
         ...(await prepareRequestContext()),
@@ -266,9 +279,7 @@ export async function startOrResumeThread(
     }
 
     if (binding?.threadId) {
-      if (!restrictedToolSurface && binding.nativeToolPolicyRestricted === true) {
-        stageBindingReplacement("rotating a host-policy-restricted thread binding");
-      } else if (binding.nativeSkillIsolationFingerprint !== nativeSkillIsolationFingerprint) {
+      if (binding.nativeSkillIsolationFingerprint !== nativeSkillIsolationFingerprint) {
         embeddedAgentLog.debug(
           "codex app-server native skill isolation changed; starting a new thread",
           { threadId: binding.threadId },
@@ -318,13 +329,33 @@ export async function startOrResumeThread(
       }
     }
     selectionBinding = binding;
-    // Capability read failures use managed search for this turn but must not
-    // create a binding that later looks like a confirmed provider-policy change.
-    let preserveExistingBinding =
-      transientDelegationRestriction ||
-      (!ringZeroActive &&
-        params.nativeProviderWebSearchSupport === "unknown" &&
-        !binding?.threadId);
+    if (
+      binding?.threadId &&
+      !restrictedToolSurface &&
+      binding.nativeToolPolicyRestricted === true
+    ) {
+      stageBindingReplacement("rotating a host-policy-restricted thread binding");
+    }
+    if (binding?.threadId && (transientNativeToolRestriction || transientWebSearchRestriction)) {
+      assertCodexBindingMayBeReplaced(
+        binding,
+        "starting a turn-restricted thread",
+        expectedOwnership,
+      );
+      preserveExistingBinding = true;
+      binding = undefined;
+    }
+    if (binding?.restrictedThreadConfigFingerprint && params.nativeCodeModeEnabled !== false) {
+      stageBindingReplacement("rotating a native-tool-disabled thread binding");
+    }
+    if (binding?.threadId && params.nativeCodeModeEnabled === false && !ringZeroActive) {
+      if (!binding.restrictedThreadConfigFingerprint) {
+        stageBindingReplacement("transitioning an unattested restricted binding");
+      } else {
+        restrictedResumeCandidate = true;
+      }
+    }
+
     let rotatedContextEngineBinding = false;
     let prebuiltPluginThreadConfig: CodexPluginThreadConfig | undefined;
     // Scoped inventory requires a loaded native thread. The warm/resume owner
@@ -444,21 +475,6 @@ export async function startOrResumeThread(
       }
       binding = undefined;
     }
-    if (binding?.threadId && transientNativeToolRestriction && !ringZeroActive) {
-      assertCodexBindingMayBeReplaced(
-        binding,
-        "starting a native-tool-restricted turn",
-        expectedOwnership,
-      );
-      embeddedAgentLog.debug(
-        "codex app-server native tool surface disabled for turn; starting transient thread",
-        {
-          threadId: binding.threadId,
-        },
-      );
-      preserveExistingBinding = true;
-      binding = undefined;
-    }
     if (binding?.threadId && transientDelegationRestriction) {
       assertCodexBindingMayBeReplaced(
         binding,
@@ -540,10 +556,13 @@ export async function startOrResumeThread(
           "changing the dynamic tool catalog",
           expectedOwnership,
         );
-        preserveExistingBinding = shouldStartTransientNoToolThread({
-          previous: binding.dynamicToolsFingerprint,
-          nextHasDynamicTools: params.dynamicTools.length > 0,
-        });
+        preserveExistingBinding =
+          params.params.pluginHarnessToolPolicyScope !== "conversation" &&
+          params.nativeCodeModeEnabled !== false &&
+          shouldStartTransientNoToolThread({
+            previous: binding.dynamicToolsFingerprint,
+            nextHasDynamicTools: params.dynamicTools.length > 0,
+          });
         if (preserveExistingBinding) {
           embeddedAgentLog.debug(
             "codex app-server dynamic tools unavailable for turn; starting transient thread",
@@ -561,6 +580,7 @@ export async function startOrResumeThread(
           params,
           binding,
           clientId,
+          requireRestrictedThreadConfigFingerprint: restrictedResumeCandidate,
           buildLoadedPluginThreadConfig,
         });
         if (warmReuse.kind === "ready") {
@@ -579,6 +599,7 @@ export async function startOrResumeThread(
           const resumed = await resumeExistingCodexThread(params, {
             ...requestContext,
             binding: resumeBinding,
+            requireRestrictedThreadConfigFingerprint: restrictedResumeCandidate,
             stageBindingReplacement,
             prebuiltFinalConfigPatch: warmReuse.prebuiltFinalConfigPatch,
             prebuiltPluginThreadConfig,
