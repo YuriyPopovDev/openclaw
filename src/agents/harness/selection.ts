@@ -364,6 +364,7 @@ export async function runAgentHarnessAttempt(
     systemAgentTool: _systemAgentTool,
     ...attemptParams
   } = internalParams;
+  const hasRuntimePluginToolGrant = attemptParams.runtimePluginToolGrant !== undefined;
   const pluginAttempt = withoutInternalHarnessAuthority(
     attemptParams,
     harness,
@@ -393,6 +394,7 @@ export async function runAgentHarnessAttempt(
               harness,
               nativePermissionsConsented,
               pluginAttempt.setInputAttachmentReadAllowed,
+              hasRuntimePluginToolGrant,
             );
         const effectiveAttemptParams =
           hostOpenClawAuthority && preparedParams.pluginHarnessToolPolicyRestricted
@@ -644,6 +646,7 @@ async function preparePluginHarnessParams(
   harness: AgentHarness,
   nativePermissionsConsented: boolean,
   setInputAttachmentReadAllowed: (allowed: boolean) => void,
+  hasRuntimePluginToolGrant: boolean,
 ): Promise<import("./types.js").AgentHarnessAttemptParamsV2> {
   const boundary = "plugin harness handoff";
   const resolvedApiKey = params.resolvedApiKey
@@ -670,7 +673,7 @@ async function preparePluginHarnessParams(
     pluginHarnessToolPolicySafeDeniedTools:
       policies.safeDeniedToolNames.length > 0 ? policies.safeDeniedToolNames : undefined,
     pluginHarnessToolPolicyRestricted: policies.toolPolicyRestricted,
-    pluginHarnessToolPolicyScope: policies.toolPolicyScope,
+    pluginHarnessToolPolicyScope: hasRuntimePluginToolGrant ? "turn" : policies.toolPolicyScope,
   };
   const effectiveParams = nativePermissionsConsented
     ? policyParams

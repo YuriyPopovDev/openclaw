@@ -345,16 +345,6 @@ export async function startOrResumeThread(
       preserveExistingBinding = true;
       binding = undefined;
     }
-    if (binding?.restrictedThreadConfigFingerprint && params.nativeCodeModeEnabled !== false) {
-      stageBindingReplacement("rotating a native-tool-disabled thread binding");
-    }
-    if (binding?.threadId && params.nativeCodeModeEnabled === false && !ringZeroActive) {
-      if (!binding.restrictedThreadConfigFingerprint) {
-        stageBindingReplacement("transitioning an unattested restricted binding");
-      } else {
-        restrictedResumeCandidate = true;
-      }
-    }
 
     let rotatedContextEngineBinding = false;
     let prebuiltPluginThreadConfig: CodexPluginThreadConfig | undefined;
@@ -418,6 +408,16 @@ export async function startOrResumeThread(
         { threadId: predecessorBinding.threadId },
       );
       preserveExistingBinding = false;
+    }
+    if (binding?.restrictedThreadConfigFingerprint && params.nativeCodeModeEnabled !== false) {
+      stageBindingReplacement("rotating a native-tool-disabled thread binding");
+    }
+    if (binding?.threadId && params.nativeCodeModeEnabled === false && !ringZeroActive) {
+      if (!binding.restrictedThreadConfigFingerprint) {
+        stageBindingReplacement("transitioning an unattested restricted binding");
+      } else {
+        restrictedResumeCandidate = true;
+      }
     }
     if (
       binding?.threadId &&

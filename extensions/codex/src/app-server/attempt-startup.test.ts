@@ -244,7 +244,12 @@ describe("startCodexAttemptThread", () => {
       },
     });
     const start = vi.spyOn(CodexAppServerClient, "start").mockResolvedValue(harness.client);
-    const common = { paths, harness, skipStartSpy: true };
+    const common = {
+      paths,
+      harness,
+      skipStartSpy: true,
+      buildAttemptParams: () => ({ ...createAttemptParams(paths), disableTools: false }),
+    };
     const ordinary = await startThreadWithHarness(5_000, undefined, common).run;
     await harness.endTurn(ordinary.thread.threadId);
     ordinary.turnRoute.release();
@@ -252,7 +257,7 @@ describe("startCodexAttemptThread", () => {
     const incognito = {
       ...common,
       buildAttemptParams: () => ({
-        ...createAttemptParams(paths),
+        ...common.buildAttemptParams(),
         sessionId: "incognito-session",
         sessionKey: "agent:agent-1:dashboard:incognito-refusal",
       }),
@@ -269,7 +274,7 @@ describe("startCodexAttemptThread", () => {
     expect(sibling).toBeTypeOf("function");
     const before = harness.writes.length;
     const refused = new AgentHarnessPreflightError("session owner revoked");
-    const attemptParams = createAttemptParams(paths);
+    const attemptParams = common.buildAttemptParams();
     const assertActive = () => {
       throw refused;
     };

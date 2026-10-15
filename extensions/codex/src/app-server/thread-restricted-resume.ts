@@ -6,7 +6,7 @@ import { isSystemAgentOnlyCodexDynamicToolAllowlist } from "./dynamic-tool-profi
 import type { JsonObject } from "./protocol.js";
 import type { CodexAppServerThreadBinding } from "./session-binding.js";
 import { fingerprintRestrictedThreadConfig } from "./thread-fingerprints.js";
-import type { CodexResumeThreadContext, CodexStartThreadContext } from "./thread-lifecycle-io.js";
+import type { CodexThreadRequestContext } from "./thread-lifecycle-preflight.js";
 import type { CodexStartOrResumeThreadParams } from "./thread-lifecycle-types.js";
 
 /** Request restrictions isolate auxiliary work; configured conversation restrictions can persist. */
@@ -43,7 +43,13 @@ export function resolveCodexProjectionStartupBinding(options: {
 
 export function isRestrictedThreadConfigCompatible(
   params: CodexStartOrResumeThreadParams,
-  context: CodexResumeThreadContext,
+  context: Pick<
+    CodexThreadRequestContext,
+    "restrictedToolSurface" | "dynamicToolsFingerprint" | "hostSystemAgentActive"
+  > & {
+    binding: CodexAppServerThreadBinding;
+    requireRestrictedThreadConfigFingerprint?: boolean;
+  },
   request: JsonObject,
   authProfileId: string | undefined,
 ): boolean {
@@ -66,7 +72,9 @@ export function isRestrictedThreadConfigCompatible(
 
 export function buildRestrictedThreadConfigFingerprint(
   params: CodexStartOrResumeThreadParams,
-  context: CodexStartThreadContext,
+  context: Pick<CodexThreadRequestContext, "dynamicToolsFingerprint" | "hostSystemAgentActive"> & {
+    preserveExistingBinding: boolean;
+  },
   request: JsonObject,
   selection: Parameters<typeof fingerprintRestrictedThreadConfig>[5],
 ): string | undefined {
