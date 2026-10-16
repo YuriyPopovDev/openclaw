@@ -48,6 +48,10 @@ export type ColdLoadProbeInput = {
     event: string;
     payload: unknown;
     history?: { text?: string; message?: unknown };
+    sessionMutation?: {
+      upsert?: import("../api/types.ts").GatewaySessionRow[];
+      removeKeys?: string[];
+    };
   }>;
   liveHistory?: {
     sessionId: string;
@@ -84,7 +88,7 @@ export function createColdLoadFrameProbe(
   const liveDeliveries: Array<LiveDeliveryOrigin & { gapMs: number | null }> = [];
   const frameProbe = {
     original: window.requestAnimationFrame,
-    request(this: Window, callback: FrameRequestCallback): number {
+    request: (callback: FrameRequestCallback): number => {
       if (frameOrigins.size >= 5000) {
         throw new Error("Live frame scheduling origin limit exceeded");
       }
@@ -96,21 +100,23 @@ export function createColdLoadFrameProbe(
         delivery: activeLiveDelivery,
         parentId: activeFrameOrigin?.id ?? null,
       };
-      origin.frameId = frameProbe.original.call(this, function (this: unknown, timestamp: number) {
-        const previous = activeFrameOrigin;
-        const { startedAt, finishedAt } = readWindow();
-        activeFrameOrigin = startedAt && !finishedAt ? origin : null;
-        try {
-          callback.call(this, timestamp);
-        } finally {
-          activeFrameOrigin = previous;
-        }
-      });
+      origin.frameId = frameProbe.original.call(
+        window,
+        function (this: unknown, timestamp: number) {
+          const previous = activeFrameOrigin;
+          const { startedAt, finishedAt } = readWindow();
+          activeFrameOrigin = startedAt && !finishedAt ? origin : null;
+          try {
+            callback.call(this, timestamp);
+          } finally {
+            activeFrameOrigin = previous;
+          }
+        },
+      );
       frameOrigins.set(origin.id, origin);
       return origin.frameId;
     },
     install() {
-      // oxlint-disable-next-line typescript/unbound-method -- Installed as a window method; forwards that receiver to the native frame owner.
       window.requestAnimationFrame = frameProbe.request;
     },
     restore() {

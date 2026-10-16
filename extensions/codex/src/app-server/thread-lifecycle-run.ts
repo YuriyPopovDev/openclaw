@@ -140,6 +140,7 @@ export async function startOrResumeThread(
       threadId: string,
       ownerClientId = initialBoundClientId,
       assertCurrent?: () => void,
+      afterThreadWrite = false,
     ) =>
       releaseCodexBoundLiveThread({
         client: params.client,
@@ -151,6 +152,7 @@ export async function startOrResumeThread(
         assertCurrent,
         withCurrent: authority.withCurrent,
         signal: params.signal,
+        onExitWaitCancelled: afterThreadWrite ? undefined : params.onPrewriteHandoffCancelled,
       });
     if (binding?.pendingSupervisionBranch) {
       const requestContext = await prepareRequestContext();
@@ -634,7 +636,13 @@ export async function startOrResumeThread(
     });
     if (replacementPredecessor && !preserveExistingBinding && configuredMcpOwnershipChanged) {
       // Configured MCP migration retains the prior subscription until its replacement commits.
-      await releaseRetainedThread(replacementPredecessor.threadId, replacementPredecessor.clientId);
+      // That replacement already subscribed this client, so cancellation cannot keep it.
+      await releaseRetainedThread(
+        replacementPredecessor.threadId,
+        replacementPredecessor.clientId,
+        undefined,
+        true,
+      );
     }
     return publishCodexThreadInferenceBinding(params, started);
   };

@@ -126,7 +126,8 @@ openclaw-chat-details-progress {
   color: var(--text);
   font-size: 13px;
 }
-.chat-details__toolbar button {
+.chat-details__toolbar button,
+.chat-details__row .chat-copy-btn {
   display: grid;
   place-items: center;
   width: 24px;
@@ -135,9 +136,20 @@ openclaw-chat-details-progress {
   border: 0;
   border-radius: 5px;
   background: transparent;
+}
+.chat-details__toolbar button {
   color: var(--muted);
 }
-.chat-details__toolbar svg {
+@media (hover: hover) {
+  .chat-details__row .chat-copy-btn {
+    opacity: 0;
+  }
+  .chat-details__row:is(:hover, :focus-within) .chat-copy-btn {
+    opacity: 1;
+  }
+}
+.chat-details__toolbar svg,
+.chat-details__row .chat-copy-btn svg {
   width: 14px;
   height: 14px;
 }
@@ -146,7 +158,7 @@ openclaw-chat-details-progress {
   align-items: center;
   gap: 5px;
   min-height: 28px;
-  padding: 3px 0;
+  padding: 3px 8px;
   list-style: none;
   color: var(--text);
   font-size: 13px;
@@ -182,11 +194,11 @@ openclaw-chat-details-progress {
   display: flex;
   align-items: center;
   gap: 9px;
-  min-height: 32px;
+  min-height: 36px;
   width: 100%;
-  padding: 4px 0;
+  padding: 6px 8px;
   border: 0;
-  border-radius: 5px;
+  border-radius: 8px;
   background: transparent;
   color: var(--text);
   font: inherit;
@@ -503,20 +515,6 @@ openclaw-chat-details-progress {
   flex: none;
   margin-inline-start: auto;
 }
-.chat-details__row .chat-copy-btn {
-  display: grid;
-  place-items: center;
-  width: 24px;
-  height: 24px;
-  padding: 4px;
-  border: 0;
-  border-radius: 5px;
-  background: transparent;
-}
-.chat-details__row .chat-copy-btn svg {
-  width: 14px;
-  height: 14px;
-}
 .chat-details__navigation > span {
   flex: 1;
 }
@@ -546,11 +544,11 @@ openclaw-chat-details-progress {
 }
 .chat-details__meter::-webkit-meter-optimum-value {
   border-radius: 4px;
-  background: var(--accent);
+  background: currentColor;
 }
 .chat-details__meter::-moz-meter-bar {
   border-radius: 4px;
-  background: var(--accent);
+  background: currentColor;
 }
 .chat-details__context-budget {
   display: flex;

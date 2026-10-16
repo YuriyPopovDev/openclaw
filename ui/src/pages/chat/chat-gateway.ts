@@ -12,9 +12,9 @@ import { isAssistantHeartbeatAckForDisplay } from "../../lib/chat/heartbeat-disp
 import { extractText } from "../../lib/chat/message-extract.ts";
 import {
   isHiddenAssistantStreamText,
-  isSilentReplyStream,
   shouldHideAssistantChatMessage,
 } from "../../lib/chat/message-visibility.ts";
+import { readPairingQrContent } from "../../lib/chat/pairing-qr.ts";
 import { visibleSessionMatches } from "../../lib/sessions/navigation.ts";
 import { isUiGlobalSessionKey, resolveUiDefaultAgentId } from "../../lib/sessions/session-key.ts";
 import { materializeVisibleAssistantStreamMessages } from "./chat-history-stream.ts";
@@ -141,6 +141,7 @@ export function handleChatGatewayEvent(state: ChatState, incoming?: ChatEventPay
           __openclaw: { ...asRecord(incomingFinalMessage["__openclaw"]), id: injectedMessageId },
         }
       : incomingFinalMessage;
+  const hasPairingQr = readPairingQrContent(normalizedFinalMessage).length > 0;
   const terminalAfterSequence = (
     messages: unknown[],
     runId: string | null | undefined,
@@ -336,7 +337,7 @@ export function handleChatGatewayEvent(state: ChatState, incoming?: ChatEventPay
       (payload.state === "final" &&
         (!incomingFinal ||
           shouldHideAssistantChatMessage(incomingFinal) ||
-          hasSessionProjectionAcceptedFinal(previousTerminalRun, incomingFinal)))
+          (!hasPairingQr && hasSessionProjectionAcceptedFinal(previousTerminalRun, incomingFinal))))
     ) {
       reconcileOwnedTerminalRun();
       return payload.state;
@@ -428,6 +429,7 @@ export function handleChatGatewayEvent(state: ChatState, incoming?: ChatEventPay
         }
       : payload.phase && {
           phase: payload.phase,
+          ...(payload.waitReason ? { waitReason: payload.waitReason } : {}),
           ...(payload.seq === undefined ? {} : { seq: payload.seq }),
         };
     if (status) {
@@ -461,8 +463,7 @@ export function handleChatGatewayEvent(state: ChatState, incoming?: ChatEventPay
       reconcileChatRunStartup(state, { state: "activity", runId: payload.runId });
     }
     if (typeof next === "string") {
-      const hidden =
-        isSilentReplyStream(next) || isAssistantHeartbeatAckForDisplay(payload.message);
+      const hidden = isAssistantHeartbeatAckForDisplay(payload.message);
       // A replacement retires the previous baseline even when its new text is hidden;
       // ignoring it would keep already-saved text visible beside its durable row.
       if (payload.replace) {
@@ -473,7 +474,7 @@ export function handleChatGatewayEvent(state: ChatState, incoming?: ChatEventPay
     }
   } else if (payload.state === "final") {
     const finalMessage = normalizedFinalMessage;
-    if (authoritativeTerminalMatches) {
+    if (authoritativeTerminalMatches && !hasPairingQr) {
       // History already owns this run's terminal message. Discard the live
       // projection; terminal cleanup below clears its remaining stream.
     } else if (finalMessage && !shouldHideAssistantChatMessage(finalMessage)) {

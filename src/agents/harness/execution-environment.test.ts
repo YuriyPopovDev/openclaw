@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
+import { attachToolAllowlistIntersection } from "../tool-policy.js";
 import {
   preparePluginHarnessPolicyToolsAllow,
   preparePluginHarnessToolPolicies,
@@ -22,6 +23,12 @@ describe("native harness tool policy", () => {
       restricted: true,
     },
     {
+      name: "wildcard with a restrictive intersection",
+      params: { toolsAllow: attachToolAllowlistIntersection(["*"], [["*"], ["read"]]) },
+      scope: "turn",
+      restricted: true,
+    },
+    {
       name: "unrestricted scheduled policy",
       params: { toolsAllow: ["*"], scheduledToolPolicy: { version: 1, mode: "trusted" } },
       scope: "conversation",
@@ -30,6 +37,42 @@ describe("native harness tool policy", () => {
     {
       name: "finite scheduled policy",
       params: { toolsAllow: ["read"], scheduledToolPolicy: { version: 1, mode: "trusted" } },
+      scope: "turn",
+      restricted: true,
+    },
+    {
+      name: "unrestricted scheduled policy with conversation deny",
+      params: {
+        config: { tools: { deny: ["exec"] } },
+        toolsAllow: ["*"],
+        scheduledToolPolicy: { version: 1, mode: "trusted" },
+      },
+      scope: "conversation",
+      restricted: true,
+    },
+    {
+      name: "unrestricted scheduled policy with conversation profile",
+      params: {
+        config: { tools: { profile: "coding" } },
+        toolsAllow: ["*"],
+        scheduledToolPolicy: { version: 1, mode: "trusted" },
+      },
+      scope: "conversation",
+      restricted: false,
+    },
+    {
+      name: "account-scoped scheduled policy with conversation deny",
+      params: {
+        config: { tools: { deny: ["exec"] } },
+        toolsAllow: ["*"],
+        scheduledToolPolicy: {
+          version: 1,
+          mode: "account",
+          ownerSessionKey: "agent:main:main",
+          ownerAccountId: "default",
+          ownerOrigin: { kind: "local" },
+        },
+      },
       scope: "turn",
       restricted: true,
     },

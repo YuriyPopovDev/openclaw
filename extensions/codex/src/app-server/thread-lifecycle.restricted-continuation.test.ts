@@ -112,11 +112,20 @@ describe("persistent restricted Codex continuation", () => {
   });
 
   it.each(["warm", "cold"] as const)(
-    "keeps the native ID on a compatible %s follow-up",
+    "keeps the native ID across no-op wildcard changes for a %s owner",
     async (mode) => {
       const { fixture, common, attempt, read, idle } = await createFixture();
       const first = await startOrResumeThread(common);
       await idle(first, mode);
+      const scheduled = await startOrResumeThread({
+        ...common,
+        params: { ...attempt, runId: "scheduled", toolsAllow: ["*"] },
+      });
+      expect(scheduled).toMatchObject({
+        threadId: first.threadId,
+        lifecycle: { action: "resumed" },
+      });
+      await idle(scheduled, mode);
       const next = await startOrResumeThread({
         ...common,
         params: { ...attempt, runId: "follow-up" },
@@ -132,7 +141,7 @@ describe("persistent restricted Codex continuation", () => {
       ).toHaveLength(1);
       expect(
         fixture.request.mock.calls.filter(([method]) => method === "thread/resume"),
-      ).toHaveLength(mode === "cold" ? 1 : 0);
+      ).toHaveLength(mode === "cold" ? 2 : 0);
       await next.liveThreadOwnership?.release(next.threadId);
     },
   );
@@ -266,6 +275,10 @@ describe("persistent restricted Codex continuation", () => {
     {
       restriction: "temporary empty allowlist",
       patch: { toolsAllow: [], pluginHarnessToolPolicyScope: "turn" },
+    },
+    {
+      restriction: "unscoped wildcard",
+      patch: { toolsAllow: ["*"], pluginHarnessToolPolicyScope: undefined },
     },
   ] satisfies Array<{ restriction: string; patch: Partial<CodexAttemptThreadInput["params"]> }>)(
     "isolates initial and follow-up $restriction while retaining the durable conversation",

@@ -569,9 +569,7 @@ export function resolvePluginHarnessToolPolicies(
     mergeAlsoAllowPolicy(policy.providerProfilePolicy, policy.providerProfileAlsoAllow),
   ];
   const systemAgentOnlyAllowlist =
-    isHostScopedAgentToolActive("openclaw") &&
-    params.toolsAllow?.length === 1 &&
-    normalizeToolPolicyName(params.toolsAllow[0] ?? "") === "openclaw";
+    isHostScopedAgentToolActive("openclaw") && isSystemAgentOnlyAllowlist(params.toolsAllow);
   const senderScopedGroupPolicy = resolveSenderScopedGroupToolPolicy(
     params,
     groupPolicyParams,
@@ -582,7 +580,7 @@ export function resolvePluginHarnessToolPolicies(
     toolPolicyScope:
       params.disableTools ||
       (!systemAgentOnlyAllowlist && toolPolicyRestrictsTools(requestedToolPolicy)) ||
-      (params.scheduledToolPolicy !== undefined &&
+      (params.scheduledToolPolicy?.mode === "account" &&
         (explicitPolicies.some(toolPolicyRestrictsTools) ||
           profilePolicies.some(toolPolicyRestrictsTools))) ||
       params.runtimePluginToolGrant !== undefined ||
@@ -621,6 +619,10 @@ export function resolvePluginHarnessToolPolicies(
         toolPolicyRestrictsHarnessNativeTools(explicitPolicy, safeDenyToolNameSet),
       ),
   };
+}
+
+export function isSystemAgentOnlyAllowlist(toolsAllow: readonly string[] | undefined): boolean {
+  return toolsAllow?.length === 1 && normalizeToolPolicyName(toolsAllow[0] ?? "") === "openclaw";
 }
 
 function collectHarnessSafeDeniedToolNames(

@@ -119,6 +119,7 @@ export function fingerprintRestrictedThreadConfig(
     disableTools?: boolean;
     delegationCapability?: string;
     pluginHarnessToolPolicyRestricted?: boolean;
+    pluginHarnessToolPolicyScope?: "conversation" | "turn";
     pluginHarnessToolPolicySafeDeniedTools?: readonly string[];
   },
   hostSystemAgentActive: boolean,
@@ -138,7 +139,13 @@ export function fingerprintRestrictedThreadConfig(
         selection,
       ),
       hostSystemAgentActive,
-      toolsAllow: attempt.toolsAllow ? [...attempt.toolsAllow] : null,
+      toolsAllow:
+        attempt.pluginHarnessToolPolicyScope === "conversation" &&
+        attempt.toolsAllow?.some((entry) => entry.trim() === "*")
+          ? null
+          : attempt.toolsAllow
+            ? [...attempt.toolsAllow]
+            : null,
       disableTools: attempt.disableTools === true,
       delegationCapability: attempt.delegationCapability ?? null,
       pluginHarnessToolPolicyRestricted: attempt.pluginHarnessToolPolicyRestricted === true,

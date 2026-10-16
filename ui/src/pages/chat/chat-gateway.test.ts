@@ -592,12 +592,20 @@ describe("handleChatGatewayEvent", () => {
 
   it.each([
     {
-      name: "retires saved text when a replacement tail is a silent token",
+      name: "retracts the stream when a replacement snapshot is empty",
+      previous: "Draft",
+      delta: "",
+      snapshot: "",
+      replace: true,
+      expected: "",
+    },
+    {
+      name: "preserves a prepared literal marker in a replacement tail",
       previous: "The token is ",
       delta: "",
       snapshot: "NO_REPLY",
       replace: true,
-      expected: "",
+      expected: "NO_REPLY",
     },
   ])("$name", ({ previous, delta, snapshot, replace, expected }) => {
     const state = createState({
@@ -1155,6 +1163,52 @@ describe("handleChatGatewayEvent", () => {
 });
 
 describe("authoritative terminal history identity", () => {
+  it.each([false, true])(
+    "keeps the live pairing QR through history refreshes (history first=%s)",
+    async (historyFirst) => {
+      const text =
+        "Scan this QR code with the OpenClaw iOS app:\n\n- Gateway: wss://pair.example.invalid\n- Auth: token\n- Security: single-use bootstrap token";
+      const saved = textMessage("assistant", text, { id: "pair-reply", seq: 2, runId: "run-1" });
+      const qr = {
+        type: "openclaw_pairing_qr",
+        image_url: "data:image/png;base64,c3ludGhldGljLXFy",
+        alt: "OpenClaw pairing QR code",
+        expiresAtMs: Date.now() + 600_000,
+        sensitive: true,
+      };
+      const live = { ...saved, content: [{ type: "text", text }, qr] };
+      const { state, request } = createResolvedHistoryState(
+        { messages: [saved], sessionId: "pair-session" },
+        { chatRunId: "run-1", currentSessionId: "pair-session" },
+      );
+      if (historyFirst) {
+        rememberAuthoritativeTerminal({
+          host: state,
+          event: { key: "main", runId: "run-1", hasActiveRun: false },
+          payload: { message: saved },
+          matchesChat: true,
+          runIdBeforeApply: "run-1",
+        });
+        await loadChatHistory(state);
+        expect(authoritativeHistoryAppliedForRun(state, "run-1")).toBe(true);
+      }
+      receive(state, "final", { message: live });
+      expect(state.chatMessages).toEqual([live]);
+      for (let refresh = 0; refresh < 2; refresh += 1) {
+        await loadChatHistory(state);
+        expect(state.chatMessages).toEqual([live]);
+      }
+      const revised = { ...saved, content: [{ type: "text", text: "Updated pairing details" }] };
+      applySessionMessagePayload(state, { message: revised }, false, { kind: "history-delta" });
+      expect(state.chatMessages).toEqual([{ ...revised, content: [...revised.content, qr] }]);
+      request.mockResolvedValue({ messages: [revised], sessionId: "pair-session" });
+      await loadChatHistory(state);
+      request.mockResolvedValue({ messages: [], sessionId: "pair-session" });
+      await loadChatHistory(state);
+      expect(state.chatMessages).toEqual([]);
+    },
+  );
+
   it("does not retire a native terminal for user or imported identities with a colliding id", () => {
     const collisions = [
       textMessage("user", "Different native user", { id: "native-terminal" }),
@@ -1206,13 +1260,18 @@ describe("authoritative terminal history identity", () => {
 });
 
 describe("loadChatHistory filtering", () => {
-  it("filters silent and synthetic history rows while preserving user content and media", async () => {
+  it("trusts prepared history text while filtering synthetic rows and heartbeat acknowledgments", async () => {
     const repair =
       "[openclaw] missing tool result in session history; inserted synthetic error result for transcript repair.";
     const visible = [
       textMessage("user", "NO_REPLY"),
       textMessage("user", repair),
       textMessage("assistant", "no_reply"),
+      textMessage("assistant", "NO_REPLY"),
+      { role: "assistant", text: "  NO_REPLY  " },
+      textMessage("assistant", "NO_REPLY."),
+      textMessage("assistant", '{"action":"NO_REPLY"}'),
+      textMessage("assistant", "I will not reply: NO_REPLY"),
       textMessage("assistant", "ANNOUNCE_SKIP"),
       textMessage("assistant", "REPLY_SKIP"),
       textMessage("assistant", "Real answer"),
@@ -1226,8 +1285,6 @@ describe("loadChatHistory filtering", () => {
       },
     ];
     const hidden = [
-      textMessage("assistant", "NO_REPLY"),
-      { role: "assistant", text: "  NO_REPLY  " },
       textMessage("assistant", "HEARTBEAT_OK"),
       textMessage(
         "user",
