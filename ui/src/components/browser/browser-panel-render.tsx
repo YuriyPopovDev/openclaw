@@ -1,11 +1,13 @@
-import { createMemo } from "@solidjs/signals";
+import { createMemo, untrack } from "@solidjs/signals";
 import type { JSX } from "@solidjs/web";
-import { Match, Switch } from "solid-js";
+import { Match, onSettled, Switch } from "solid-js";
 import { registerBrowserEnglish } from "../../i18n/locales/en-browser.ts";
 import { t, registerEnglishCatalog } from "../../lib/reactive/i18n.ts";
+import { listen } from "../../lib/reactive/listener.ts";
 import { generateUUID } from "../../lib/uuid.ts";
 import { Icon } from "../solid/icon.tsx";
 import { PanelEmptyState } from "../solid/panel-empty-state.tsx";
+import { PanelIconButton } from "../solid/panel-icon-button.tsx";
 import { PanelLoadingSkeleton } from "../solid/panel-loading-skeleton.tsx";
 import type { BrowserPanelController } from "./browser-panel-controller.ts";
 import { BrowserPanelTabs } from "./browser-panel-tabs.tsx";
@@ -25,32 +27,27 @@ function BrowserIconButton(props: {
   newTab?: boolean;
 }) {
   return (
-    <button
+    <PanelIconButton
+      {...props}
       class={props.class ?? "bp-icon"}
-      type="button"
-      data-new-tab-action={props.newTab ? "" : undefined}
-      title={props.title ?? props.label}
-      aria-label={props.label}
-      aria-busy={props.busy === undefined ? undefined : props.busy ? "true" : "false"}
-      disabled={props.disabled}
-      onClick={() => props.onClick()}
-    >
-      {props.icon === "mousePointer" ? (
-        <svg
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          stroke-width="2"
-          stroke-linecap="round"
-          stroke-linejoin="round"
-          aria-hidden="true"
-        >
-          <path d="m4 4 7.07 17 2.51-7.39L21 11.07z" />
-        </svg>
-      ) : (
-        <Icon name={props.icon} />
-      )}
-    </button>
+      icon={
+        props.icon === "mousePointer" ? (
+          <svg
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            aria-hidden="true"
+          >
+            <path d="m4 4 7.07 17 2.51-7.39L21 11.07z" />
+          </svg>
+        ) : (
+          <Icon name={props.icon} />
+        )
+      }
+    />
   );
 }
 
@@ -424,6 +421,27 @@ export function BrowserPanelChrome(
     tabsInHeader: boolean;
   },
 ) {
+  // Resource callbacks retain this viewport's synchronous browser owner.
+  const controller = untrack(() => props.controller);
+  let viewport!: HTMLDivElement;
+  onSettled(() => {
+    const observer =
+      typeof ResizeObserver === "function"
+        ? new ResizeObserver(([entry]) => {
+            if (entry) {
+              controller.handleViewportResize(entry.contentRect.width, entry.contentRect.height);
+            }
+          })
+        : undefined;
+    observer?.observe(viewport);
+    // SAFETY: Native wheel events are WheelEvents; cancel local scrolling before they bubble.
+    const handleWheel = (event: Event) => controller.handleWheel(event as WheelEvent);
+    const stopWheel = listen(viewport, "wheel", handleWheel, { passive: false });
+    return () => {
+      observer?.disconnect();
+      stopWheel();
+    };
+  });
   const panelId = `browser-tab-panel-${generateUUID()}`;
   const rendersTabStrip = createMemo(
     () =>
@@ -476,12 +494,7 @@ export function BrowserPanelChrome(
         </div>
       ) : null}
       <div
-        ref={(element) => {
-          // Remote scrolling must cancel local scrolling before the event bubbles.
-          element.addEventListener("wheel", (event) => props.controller.handleWheel(event), {
-            passive: false,
-          });
-        }}
+        ref={(element) => (viewport = element)}
         id={panelId}
         class="bp-viewport"
         role="tabpanel"

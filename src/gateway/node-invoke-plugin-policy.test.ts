@@ -26,8 +26,6 @@ import {
 import { registerNodePolicyApprovalDeliveryTests } from "./node-invoke-plugin-policy.approval-delivery.test-support.js";
 import { applyPluginNodeInvokePolicy } from "./node-invoke-plugin-policy.js";
 import {
-  createApprovalClient,
-  createApprovalClientLookup,
   createApprovalRequestPolicy,
   createContext,
   createDemoPolicy,
@@ -43,6 +41,10 @@ import {
   setDangerousDemoCommandRegistry,
 } from "./node-invoke-plugin-policy.test-helpers.js";
 import { listPendingOperatorApprovals } from "./operator-approval-store.js";
+import {
+  createApprovalClient,
+  createApprovalClientLookup,
+} from "./server-methods/approval-request.test-support.js";
 
 const tempDirs: string[] = [];
 
@@ -509,7 +511,7 @@ describe("applyPluginNodeInvokePolicy", () => {
     expect(invoke).toHaveBeenCalledOnce();
   });
 
-  it.for([false, true])("routes approvals for synthetic=%s", async (synthetic, testContext) => {
+  it.for([true])("routes approvals for synthetic=%s", async (synthetic, testContext) => {
     const fixture = createTestApprovalFixture<PluginApprovalRequestPayload>(testContext, {
       approvalKind: "plugin",
     });

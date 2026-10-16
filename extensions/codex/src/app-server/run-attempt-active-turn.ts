@@ -26,6 +26,7 @@ import {
 } from "./attempt-steering.js";
 import type { EmbeddedRunAttemptResult } from "./attempt-terminal.js";
 import { CODEX_TURN_START_TEXT_INPUT_MAX_CHARS } from "./context-engine-projection.js";
+import type { CodexAppServerEventProjectorOptions } from "./event-projector-options.js";
 import { CodexAppServerEventProjector } from "./event-projector.js";
 import {
   createCodexNativeMcpAppResultDetailsPreparer,
@@ -61,6 +62,7 @@ export function activateCodexAttemptTurn(
   lifecycle: CodexAttemptLifecycleController,
   notifications: CodexAttemptNotificationController,
   { turn, upstreamUserText }: CodexStartedTurn,
+  onResponseObserved: CodexAppServerEventProjectorOptions["onResponseObserved"],
 ) {
   const {
     prompt,
@@ -171,6 +173,7 @@ export function activateCodexAttemptTurn(
     activeTurnId,
     {
       agentHookContext: hookContext,
+      onResponseObserved,
       hasDeliveredFinalSourceReply: () => toolBridge.telemetry.finalSourceReplyDelivered === true,
       initialContextTokens: connection.mutable.startupContextTokens,
       nativePostToolUseRelayEnabled:
@@ -310,6 +313,9 @@ export function activateCodexAttemptTurn(
         await enqueueNotification(
           {
             method: "turn/completed",
+            threadId: resourceState.thread.threadId,
+            turnId: activeTurnId,
+            completedTurn: turn.turn,
             params: {
               threadId: resourceState.thread.threadId,
               turnId: activeTurnId,
@@ -406,8 +412,8 @@ export function activateCodexAttemptTurn(
       };
     },
     beforeSubmit: async (items) => {
-      // Commit preceding answers and user custody before Codex can act on the
-      // steer. Its acknowledgment and user-message echo can both arrive later.
+      // User input owns transcript custody before dispatch. Internal guidance
+      // is recorded only once Codex accepts it, so a rejected steer cannot replay.
       const transcriptItems = items.filter(
         (item) =>
           item.isInboundUserMessage === true || item.userTurnTranscriptRecorder !== undefined,
@@ -441,6 +447,9 @@ export function activateCodexAttemptTurn(
         assertSteeringActive();
       }
       for (const item of transcriptItems) {
+        if (item.isInboundUserMessage === false) {
+          continue;
+        }
         const recorder = item.userTurnTranscriptRecorder;
         if (!recorder) {
           continue;
@@ -502,18 +511,36 @@ export function activateCodexAttemptTurn(
         });
       }
     }
+    let unconfirmed: CodexSteeringAcceptedUnconfirmedError | undefined;
     try {
       await activeSteeringQueue.queue(text, optionsLocal, canClaim, preparation);
     } catch (error) {
-      if (error instanceof CodexSteeringAcceptedUnconfirmedError) {
+      if (!(error instanceof CodexSteeringAcceptedUnconfirmedError)) {
+        throw error;
+      }
+      unconfirmed = error;
+    }
+    const recorder =
+      optionsLocal?.isInboundUserMessage === false
+        ? optionsLocal.userTurnTranscriptRecorder
+        : undefined;
+    if (recorder) {
+      recorder.markSentToProvider?.();
+      try {
+        await recorder.persistApproved();
+        if (!recorder.hasPersisted()) {
+          throw new Error("Accepted Codex steering could not be persisted");
+        }
+      } catch (error) {
         return {
           transcriptCommit: "unconfirmed" as const,
           errorMessage: formatErrorMessage(error),
         };
       }
-      throw error;
     }
-    return undefined;
+    return unconfirmed
+      ? { transcriptCommit: "unconfirmed" as const, errorMessage: formatErrorMessage(unconfirmed) }
+      : undefined;
   };
   const messageInjection = {
     version: 2 as const,

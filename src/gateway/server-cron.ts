@@ -1,5 +1,6 @@
 import { finiteSecondsToTimerSafeMilliseconds } from "@openclaw/normalization-core/number-coercion";
 import { retireSessionMcpRuntime } from "../agents/agent-bundle-mcp-tools.js";
+import { prepareAgentRunTerminalReply } from "../agents/agent-run-terminal-reply.js";
 import {
   listAgentIds,
   resolveAgentEntry,
@@ -8,7 +9,6 @@ import {
 import { isEmbeddedAgentSessionHeldByOtherRun } from "../agents/embedded-agent-runner/runs.js";
 import { abortAndDrainEmbeddedAgentRun } from "../agents/embedded-agent.js";
 import { loadPreparedInboundPluginRegistry } from "../agents/prepared-model-runtime.inbound-registry.js";
-import { isSilentReplyText, SILENT_REPLY_TOKEN } from "../auto-reply/tokens.js";
 import type { CliDeps } from "../cli/deps.types.js";
 import { DEFAULT_CRON_ENABLED } from "../config/cron-limits.js";
 import { getRuntimeConfig } from "../config/io.js";
@@ -22,7 +22,6 @@ import {
 import { resolveSessionStorePathCore } from "../config/sessions/paths.js";
 import { listKnownSessionStoreAgentIdsAsync } from "../config/sessions/targets-runtime.js";
 import { listConfiguredSessionStoreAgentIds } from "../config/sessions/targets.js";
-import type { AgentDefaultsConfig } from "../config/types.agent-defaults.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { resolveCronJobEffectiveAgentId } from "../cron/agent-id.js";
 import { redactCronCommandSummaryForExternalDelivery } from "../cron/command-output-summary.js";
@@ -45,6 +44,7 @@ import type { GatewayScheduler } from "../infra/gateway-scheduler.js";
 import {
   resolveHeartbeatForWake,
   resolveHeartbeatTimeoutOverrideSeconds,
+  sanitizeCronHeartbeatOverride,
 } from "../infra/heartbeat-config.js";
 import {
   requestHeartbeat,
@@ -99,6 +99,7 @@ import {
   fireStreamJob,
   formatOnExitRunSummary,
 } from "./server-cron-event-dispatch.js";
+import { describeCronInferenceMigration } from "./server-cron-inference.js";
 import {
   dispatchGatewayCronFinishedNotifications,
   sendGatewayCronWebhook,
@@ -113,7 +114,6 @@ import {
 import type { GatewayRequestContext } from "./server-methods/types.js";
 import {
   invalidateSessionAutomationIndex,
-  claimSessionAutomationEpoch,
   registerSessionAutomationSource,
   unregisterSessionAutomationSource,
 } from "./session-automation-index.js";
@@ -136,14 +136,6 @@ export type GatewayCronExitWatcherHandoff = {
   adopt: (watchers: CronExitWatchers) => Promise<void> | void;
   stopOwner: () => Promise<void>;
 };
-
-function sanitizeCronHeartbeatOverride(
-  heartbeat: AgentDefaultsConfig["heartbeat"] | undefined,
-): AgentDefaultsConfig["heartbeat"] | undefined {
-  return heartbeat?.target === "last"
-    ? { ...heartbeat, to: undefined, accountId: undefined }
-    : heartbeat;
-}
 
 export function buildGatewayCronService(params: {
   scheduler: GatewayScheduler;
@@ -497,6 +489,7 @@ export function buildGatewayCronService(params: {
     storePath,
     cronEnabled,
     cronConfig: params.cfg.cron,
+    describeJobLoadWarning: (job) => describeCronInferenceMigration(getRuntimeConfig(), job),
     listConfiguredChannels: () => listConfiguredMessageChannels(getRuntimeConfig()),
     ...(scriptRuntime ? { evaluateCronTrigger: scriptRuntime.evaluateTrigger } : {}),
     ...(defaultAgentId ? { defaultAgentId } : {}),
@@ -538,17 +531,15 @@ export function buildGatewayCronService(params: {
       return remove ? { accepted: true, remove } : { accepted: false };
     },
     resolveOriginDeliveryContext: (opts) => {
-      // Resolve the wake target the same way the enqueue/heartbeat deps do,
-      // then read the channel-correct delivery context from that session's
-      // store entry (NOT by string-splitting the composite session key).
-      const { runtimeConfig, sessionKey } = resolveCronTarget({
+      // Global scope removes the key's agent prefix; retain the selected store owner.
+      const { runtimeConfig, agentId, sessionKey } = resolveCronTarget({
         ...opts,
         preserveUntargeted: true,
       });
       if (!sessionKey) {
         return undefined;
       }
-      return resolveCronStoredDeliveryContext({ cfg: runtimeConfig, sessionKey });
+      return resolveCronStoredDeliveryContext({ cfg: runtimeConfig, agentId, sessionKey });
     },
     runSchedulerOwned,
     requestHeartbeat: (opts) => requestHeartbeat(resolveCronHeartbeatWake(opts)),
@@ -577,6 +568,7 @@ export function buildGatewayCronService(params: {
         deps: params.deps,
         agentId,
         sessionKey,
+        trigger: "cron",
         lane: "cron",
       });
     },
@@ -586,12 +578,11 @@ export function buildGatewayCronService(params: {
         abortSignal,
         nowMs: Date.now,
       });
-      const summaryIsSilent =
-        typeof result.summary === "string" && isSilentReplyText(result.summary, SILENT_REPLY_TOKEN);
       const completion = await finalizeCronCompletionAnnouncement({
         deliveryAttemptFence,
         job,
         text: redactCronCommandSummaryForExternalDelivery(result.summary ?? ""),
+        suppressionReason: result.replyDisposition === "silent" ? "silent" : undefined,
         diagnostics: result.diagnostics,
         runStartedAtMs: job.state.runningAtMs,
         abortSignal,
@@ -601,10 +592,6 @@ export function buildGatewayCronService(params: {
         label: "command",
         traceResolvedFailure: true,
       });
-      if (summaryIsSilent) {
-        const { summary: _summary, ...silentResult } = result;
-        return { ...silentResult, ...completion };
-      }
       return { ...result, ...completion };
     },
     sendCronWebhook: async ({ job, event, abortSignal, onDeliveryState, assertCurrent }) => {
@@ -654,7 +641,8 @@ export function buildGatewayCronService(params: {
         };
       }
 
-      const notify = execution.notify?.trim() ? execution.notify : undefined;
+      const preparedNotify = prepareAgentRunTerminalReply({ rawText: execution.notify });
+      const notify = preparedNotify.text.trim() ? preparedNotify.text : undefined;
       const base = {
         status: "ok" as const,
         notify,
@@ -667,6 +655,8 @@ export function buildGatewayCronService(params: {
         deliveryAttemptFence,
         job,
         text: job.sessionTarget === "main" ? undefined : notify,
+        suppressionReason:
+          preparedNotify.terminalReply.disposition === "silent" ? "silent" : undefined,
         runStartedAtMs: job.state.runningAtMs,
         abortSignal,
         deps: params.deps,
@@ -1156,7 +1146,6 @@ export function buildGatewayCronService(params: {
     getJobs: () => cron.getLoadedJobs(),
     getDefaultAgentId: () => cron.getDefaultAgentId(),
   };
-  const automationEpoch = claimSessionAutomationEpoch();
   const stopCron = cron.stop.bind(cron);
   const stopCronLifecycle = (preserveExitWatchers = false) => {
     settleExitWatcherHandoff(false);
@@ -1245,9 +1234,7 @@ export function buildGatewayCronService(params: {
     if (lifecycleChanged()) {
       return;
     }
-    // Register only once started, under the build-time epoch, so a stale lazy
-    // service resolving after a config reload cannot clobber the replacement.
-    registerSessionAutomationSource(automationSource, automationEpoch);
+    registerSessionAutomationSource(automationSource);
     // Nudge subscribed clients into a canonical list refresh so automation
     // badges match this scheduler's bindings — including clearing them when a
     // reload lands on an empty or disabled store.

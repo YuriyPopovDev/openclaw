@@ -14,12 +14,21 @@ export type DiagnosticRuntimeMeasurementFields =
       delayMaxMs: number;
     }
   | {
+      type: "gateway.main_thread.stall";
+      stalls: { task: string; durationMs: number }[];
+      dropped: number;
+    }
+  | {
       type: "diagnostic.gc";
       durationMs: number;
-      /** Optional for existing SDK event producers; native observers always supply both. */
+      /** Optional for existing SDK event producers; native observers always supply attribution. */
       kind?: GcSample["kind"];
+      /** Bounded Node GC callback flags; absent or unrecognized values become other. */
+      reason?: GcSample["reason"];
       /** main or an allowlisted worker script basename (other for unknown scripts). */
       thread?: string;
+      /** Reusable Code Mode isolate slot (1–64), owned until native worker exit. */
+      workerSlot?: number;
     };
 
 export type DiagnosticWorkerRequestFields = {
@@ -90,6 +99,8 @@ export type DiagnosticMemoryUsage = {
     /** Actual V8 isolate limit; unavailable on runtimes without V8. */
     heapSizeLimitBytes?: number;
     threadId?: number;
+    /** Same bounded slot as diagnostic.gc; absent for overflow and other scripts. */
+    workerSlot?: number;
     external?: number;
     /** Missing for native-only samplers; zero is a measured value. Included in external. */
     arrayBuffers?: number;

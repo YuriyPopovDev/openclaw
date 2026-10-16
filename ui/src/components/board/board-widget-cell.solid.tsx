@@ -14,7 +14,7 @@ import {
 import {
   ensureCustomElementDefined,
   isOptionalElementDefined,
-  LazyCustomElementRequestController,
+  createLazyCustomElementRequests,
 } from "../../app/lazy-custom-element.ts";
 import {
   BOARD_DOCUMENT_AUTO_MAX_ROWS,
@@ -29,7 +29,7 @@ import {
 import { formatUiError } from "../../lib/format-error.ts";
 import { useOptionalApplication } from "../../lib/reactive/context.ts";
 import { t } from "../../lib/reactive/i18n.ts";
-import { projectSource } from "../../lib/reactive/projection.ts";
+import { projectOwner, projectSource } from "../../lib/reactive/projection.ts";
 import { showToast } from "../../lib/toast.ts";
 import { defineSolidBridge, type SolidBridgeElement } from "../../lit/solid-bridge.ts";
 import { CustomPluginUiDisabled } from "../../plugins/control-ui-disabled.solid.tsx";
@@ -99,10 +99,26 @@ function BoardWidgetCellContent(
     subscribe: (owner, notify) => owner?.subscribe?.(notify) ?? (() => {}),
     equality: "revision",
   });
-  const loader = new LazyCustomElementRequestController({ requestUpdate });
+  // Usage and other Gateway publications do not change a frame's connection
+  // authority. Sample mutable lifecycle facts before comparing the binding.
+  const gatewayBinding = createMemo(
+    () => {
+      const snapshot = gateway.read();
+      return [
+        snapshot?.phase,
+        snapshot?.client,
+        snapshot?.hello,
+        snapshot?.restartPending,
+        snapshot?.suspensionPhase,
+        context?.gateway.connectionRevision,
+      ] as const;
+    },
+    { equals: (previous, next) => previous.every((value, index) => value === next[index]) },
+  );
+  const loader = createLazyCustomElementRequests();
+  const loadState = projectOwner(loader, (owner) => owner.visibleState);
   const loadError = () => {
-    revision();
-    const value = loader.visibleState;
+    const value = loadState.read();
     return value?.status === "error" ? value : undefined;
   };
   const appView = new BoardMcpAppLifecycle({
@@ -142,10 +158,11 @@ function BoardWidgetCellContent(
     };
   });
   const activeKinds = () => gateway.read()?.hello?.controlUiWidgetKinds ?? [];
-  const contribution = () =>
+  const contribution = createMemo(() =>
     props.widget?.contentKind === "plugin" && !props.widget.frameUrl
       ? getPluginWidgetKindContribution(props.widget.pluginKind, activeKinds())
-      : null;
+      : null,
+  );
 
   async function runAction(action: () => Promise<void>, failureMessage?: string) {
     if (actionPending || props.busy) {
@@ -223,7 +240,7 @@ function BoardWidgetCellContent(
         props.sessionKey,
         active(),
         contribution(),
-        gateway.read(),
+        gatewayBinding(),
       ] as const,
     () =>
       untrack(() => {
@@ -294,7 +311,7 @@ function BoardWidgetCellContent(
   );
   let observedErrorBinding = false;
   createEffect(
-    () => [props.widget, props.widgetFrameUrl, plugins.revision(), gateway.revision()] as const,
+    () => [props.widget, props.widgetFrameUrl, plugins.revision(), gatewayBinding()] as const,
     () => {
       // The first observation belongs to the initial render, including its error fallback.
       if (observedErrorBinding && bodyErrored) {
@@ -399,7 +416,7 @@ function BoardWidgetCellContent(
             when={loadError()}
             fallback={
               <Show
-                when={(revision(), isOptionalElementDefined(contribution()!))}
+                when={(loadState.revision(), isOptionalElementDefined(contribution()!))}
                 fallback={<Loading />}
               >
                 <BoardCoreWidget

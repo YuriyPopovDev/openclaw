@@ -35,10 +35,16 @@ type SidebarRegionHeaderProps = RegionProps & {
   refreshHostedTabs: () => void;
 };
 
-export function readRegionHostedTabs(host: HTMLElement, panel: SidebarPanel) {
-  return readPanelHostedTabs(
-    host.parentElement?.querySelector(`[data-panel-slot="${panel.slot}"]`)?.firstElementChild,
+export function readRegionPanelHost(host: HTMLElement, slot: SidebarSlotId): Element | null {
+  const container = host.parentElement?.querySelector(`[data-panel-slot="${slot}"]`);
+  // Native panel views have an interop wrapper; raw plugin content still owns its first element.
+  return (
+    container?.querySelector("[data-sidebar-panel-host]") ?? container?.firstElementChild ?? null
   );
+}
+
+export function readRegionHostedTabs(host: HTMLElement, panel: SidebarPanel) {
+  return readPanelHostedTabs(readRegionPanelHost(host, panel.slot));
 }
 
 export function sidebarPanelType(definitions: SidebarPanelDefinition[], slot: SidebarSlotId) {
@@ -57,7 +63,7 @@ export function PanelTypeOption(props: { type: SidebarPanelDefinition; slotted?:
         class="side-panel-type-option__icon"
         aria-hidden="true"
       >
-        <LitContent value={props.type.icon} />
+        <Icon name={props.type.icon} />
       </span>
       <span class="side-panel-type-option__label">{props.type.label}</span>{" "}
       <Show when={props.type.shortcut}>
@@ -94,12 +100,12 @@ function TypeMenu(props: SidebarRegionHeaderProps) {
         id: type.slot,
         label: type.label,
         class: "side-panel-type-menu__item session-menu__item",
-        attributes: { value: type.slot },
         content: <PanelTypeOption type={type} />,
       })),
   );
   return (
     <Menu
+      lazy
       id={`side-panel-type-${id}`}
       class="side-panel-type-menu"
       panelClass="side-panel-type-menu__panel"
@@ -141,7 +147,7 @@ function HostedIcon(props: SidebarRegionHeaderProps & { tab: PanelHostedTab }) {
       : null;
   };
   return (
-    <Show when={favicon()} fallback={<LitContent value={props.tab.icon} />}>
+    <Show when={favicon()} fallback={props.tab.icon}>
       {(src) => <img class="tabstrip-tab__favicon" src={src()} alt="" />}
     </Show>
   );
@@ -198,10 +204,11 @@ export function SidebarRegionHeader(props: SidebarRegionHeaderProps) {
         }));
       }
       const type = sidebarPanelType(props.panelDefinitions, panel.slot);
-      const tab =
+      const conversation =
         panel.slot === "conversation" && props.conversationTab?.label
           ? props.conversationTab
-          : type;
+          : undefined;
+      const tab = conversation ?? type;
       return [
         {
           id: panel.id,
@@ -223,7 +230,7 @@ export function SidebarRegionHeader(props: SidebarRegionHeaderProps) {
             panel.slot === "dashboard" || canRestore
               ? () => props.callbacks?.togglePanelExpanded(panel.id)
               : undefined,
-          icon: <LitContent value={tab.icon} />,
+          icon: conversation ? <LitContent value={conversation.icon} /> : <Icon name={type.icon} />,
           closeLabel: t("chat.sidebarColumns.close", { panel: type.label }),
         },
       ];

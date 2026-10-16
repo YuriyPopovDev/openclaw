@@ -55,7 +55,6 @@ export { patchSession } from "./session-organizer-patch.runtime.ts";
 export { setSessionInvolvement } from "./session-organizer-batch-mutations.ts";
 export {
   archiveSessionWithUndo,
-  archiveSessionTreeWithUndo,
   confirmRunningSessionsArchive,
   promoteSession,
   snoozeSessionWithUndo,
@@ -591,16 +590,12 @@ export async function deleteSession(
           return;
         }
         if (removeWorktree) {
-          try {
-            const result = await scope.client.request<WorktreesRemoveResult>("worktrees.remove", {
-              id: preserved.id,
-              force: true,
-            });
-            if (result.snapshotError) {
-              host.sessionData.publishSessionMutationError(scope, result.snapshotError);
-            }
-          } catch (error) {
-            host.sessionData.publishSessionMutationError(scope, error);
+          const result = await scope.client.request<WorktreesRemoveResult>("worktrees.remove", {
+            id: preserved.id,
+            force: true,
+          });
+          if (result.snapshotError) {
+            host.sessionData.publishSessionMutationError(scope, result.snapshotError);
           }
         }
       }

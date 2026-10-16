@@ -847,7 +847,13 @@ console.log("relocated session card renders with bundled fonts");
         // Each launch boots both helpers; shared chunks pull unrelated runtime
         // exports into startup before the durable worker gate can open.
         expect(files.toSorted()).toEqual(
-          [`dist/${relay}.${extension}`, `dist/${anchor}.${extension}`].toSorted(),
+          [
+            `dist/${relay}.${extension}`,
+            `dist/${anchor}.${extension}`,
+            "dist/assets/sqlite-schema/sqlite-agent-catalogs.json",
+            "dist/assets/sqlite-schema/sqlite-daemon-catalogs.json",
+            "dist/assets/sqlite-schema/sqlite-state-catalogs.json",
+          ].toSorted(),
         );
         expect(imports).toEqual([]);
       }
@@ -1193,7 +1199,9 @@ console.log("relocated session card renders with bundled fonts");
     );
 
     expect(packageConfigs).not.toHaveLength(0);
-    expect(packageConfigs.map((entry) => entry.dts)).toEqual(packageConfigs.map(() => true));
+    expect(packageConfigs.map((entry) => entry.dts)).toEqual(
+      packageConfigs.map(() => ({ tsconfig: "tsconfig.packages.json" })),
+    );
     expect(unifiedRuntimeConfig?.dts).toBe(false);
     expect(standaloneRuntimeConfig?.dts).toBe(false);
     expect(unifiedDeclarationConfigs).toHaveLength(1);

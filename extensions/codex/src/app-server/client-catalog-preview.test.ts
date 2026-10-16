@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { CodexAppServerMessageDecoder } from "./client-message-decoder.js";
+import * as messageDecoder from "./client-message-decoder.js";
 import { createClientHarness } from "./test-support.js";
 
 const harnesses: Array<ReturnType<typeof createClientHarness>> = [];
@@ -100,9 +100,10 @@ describe("Codex catalog preview decoding", () => {
   );
 
   it("bounds catalog payloads while preserving ordinary thread/list results", async () => {
-    const parse = vi.spyOn(CodexAppServerMessageDecoder.prototype, "parse");
+    const parse = vi.spyOn(messageDecoder, "parseCodexAppServerMessage");
     const harness = createHarness();
-    const large = "unused native history ".repeat(100_000);
+    // Stay below the 8 MiB frame cap while exercising worker-side projection.
+    const large = "unused native history ".repeat(50_000);
     const thread = {
       id: "bounded-metadata",
       preview: "x".repeat(1024 * 1024),

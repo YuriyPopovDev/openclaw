@@ -3,7 +3,6 @@
 import { expectDefined } from "@openclaw/normalization-core";
 import { createSignal } from "solid-js";
 import { expect, it, onTestFinished, vi } from "vitest";
-import { ShellLayoutOwner } from "../../app/shell-layout-owner.ts";
 import { ApplicationProvider } from "../../lib/reactive/context.ts";
 import { createApplicationContextProvider } from "../../test-helpers/application-context.ts";
 import { mountSolid } from "../../test-helpers/mount-solid.ts";
@@ -19,48 +18,6 @@ import {
   installTranscriptDomMocks,
   resetTranscriptTestDom,
 } from "./components/chat-transcript.test-support.ts";
-
-it("publishes workbench layout before the first pane update and retires its report", async () => {
-  const content = document.body.appendChild(document.createElement("main"));
-  content.className = "content content--chat";
-  const layout = new ShellLayoutOwner();
-  layout.contentRef(content);
-  const connected = vi
-    .spyOn(ChatPaneRuntime.prototype, "connectedCallback")
-    .mockImplementation(() => {});
-  const disconnected = vi
-    .spyOn(ChatPaneRuntime.prototype, "disconnectedCallback")
-    .mockImplementation(() => {});
-  const observations: boolean[] = [];
-  const update = vi.spyOn(ChatPaneRuntime.prototype, "performUpdate").mockImplementation(() => {
-    observations.push(content.classList.contains("content--workbench"));
-  });
-  onTestFinished(() => {
-    connected.mockRestore();
-    disconnected.mockRestore();
-    update.mockRestore();
-    layout.contentRef(undefined);
-    content.remove();
-  });
-  const context = createInitializationContext(
-    createGatewayBrowserClientFixture({ request: vi.fn() }),
-  );
-  context.gateway.snapshot.phase = "stopped";
-  const view = mountSolid(
-    () => (
-      <ApplicationProvider value={context}>
-        <ChatPaneView paneId="workbench-layout" sessionKey="agent:main:layout" />
-      </ApplicationProvider>
-    ),
-    { container: content },
-  );
-  await waitForSolid(() => expect(observations).not.toHaveLength(0));
-  expect(observations.every(Boolean)).toBe(true);
-  expect(layout.current.workbench).toBe(true);
-  view.unmount();
-  expect(layout.current.workbench).toBeUndefined();
-  expect(content.classList.contains("content--workbench")).toBe(false);
-});
 
 it("exposes the current navigation face through the real pane host without a gateway read", async () => {
   // Keep this boundary test on bridge properties and the real navigation method.
@@ -99,6 +56,11 @@ it("exposes the current navigation face through the real pane host without a gat
 it("applies a route draft and its focus cue to an already mounted native pane", async () => {
   installTranscriptDomMocks();
   onTestFinished(resetTranscriptTestDom);
+  const renderProbe = vi.fn<(host: object, phase: "invalidate" | "commit") => void>();
+  vi.stubGlobal("openclawRenderLifecycleTestHook", renderProbe);
+  onTestFinished(() => {
+    vi.unstubAllGlobals();
+  });
   const sessionKey = "agent:main:bridge-draft";
   const fixture = createMountedPanes([
     { key: sessionKey, kind: "direct", sessionId: "bridge-draft", updatedAt: 1 },
@@ -133,9 +95,20 @@ it("applies a route draft and its focus cue to an already mounted native pane", 
     view.container.querySelector<ChatPaneElement>("openclaw-chat-pane"),
     "mounted native pane",
   );
+  const runtime = await waitForSolid(() =>
+    expectDefined(
+      renderProbe.mock.calls.find(
+        ([host, phase]) => phase === "commit" && Reflect.get(host, "element") === pane,
+      )?.[0],
+      "reported pane runtime",
+    ),
+  );
+  expect(Reflect.get(runtime, "state")).toMatchObject({ sessionKey });
+  expect(renderProbe).toHaveBeenCalledWith(pane, "commit");
   setDraft("What can you do?");
   setFocusComposer(true);
   await pane.updateComplete;
+  expect(renderProbe).toHaveBeenCalledWith(runtime, "invalidate");
   expect(textarea.value).toBe("What can you do?");
   expect(document.activeElement).toBe(textarea);
   expect(textarea.closest(".agent-chat__input")?.classList).toContain(

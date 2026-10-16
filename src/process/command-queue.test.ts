@@ -8,7 +8,7 @@ import { resolveRuntimeWorkerArgv, resolveRuntimeWorkerUrl } from "../infra/runt
 import { resetLogger, setLoggerOverride } from "../logging/logger.js";
 import { loggingState } from "../logging/state.js";
 import { createSubsystemLogger } from "../logging/subsystem.js";
-import { createLaneQueue, type LaneState } from "./command-queue.state.js";
+import { getLaneState } from "./command-queue.state.js";
 import { resetCommandQueueStateForTest } from "./command-queue.test-support.js";
 import type { CommandQueueTaskDeadline } from "./command-queue.types.js";
 import {
@@ -350,6 +350,29 @@ describe("command queue", () => {
         message.includes(`lane task interrupted: lane=${lane}`),
       ),
     ).toBe(false);
+  });
+
+  it.each([0, 3])("counts matching targets with lane concurrency %s", async (concurrency) => {
+    const lane = CommandLane.CronNested;
+    const finish = createDeferred();
+    setCommandLaneConcurrency(lane, concurrency);
+    const tasks = ["alpha", "beta", undefined].map((agentId) =>
+      enqueueCommandInLane(lane, () => finish.promise, {
+        sessionTarget: agentId ? { agentId, sessionId: agentId } : undefined,
+      }),
+    );
+    try {
+      expect(getQueueSize(lane)).toBe(3);
+      expect(getQueueSize(lane, (target) => target?.agentId === "alpha")).toBe(1);
+      expect(getQueueSize(lane, (target) => target?.agentId === "beta")).toBe(1);
+      expect(getQueueSize(lane, (target) => target?.agentId === "other")).toBe(0);
+      expect(getQueueSize(lane, (target) => target === undefined)).toBe(1);
+    } finally {
+      finish.resolve();
+      setCommandLaneConcurrency(lane, 3);
+      await Promise.all(tasks);
+    }
+    expect(getQueueSize(lane, (target) => target?.agentId === "alpha")).toBe(0);
   });
 
   it("resetAllLanes drains queued work immediately after reset", async () => {
@@ -893,22 +916,32 @@ describe("command queue", () => {
       const lane = "session:agent:main:autoqa-replacement";
       const staleGate = createDeferred();
       const replacementGate = createDeferred();
-      const staleRun = enqueueCommandInLane(lane, async () => {
-        await staleGate.promise;
-        return "stale";
-      });
+      const staleRun = enqueueCommandInLane(
+        lane,
+        async () => {
+          await staleGate.promise;
+          return "stale";
+        },
+        { sessionTarget: { agentId: "stale", sessionId: "stale" } },
+      );
 
       expect(resetCommandLane(lane)).toBe(1);
-      const replacementRun = enqueueCommandInLane(lane, async () => {
-        await replacementGate.promise;
-        return "replacement";
-      });
+      const replacementRun = enqueueCommandInLane(
+        lane,
+        async () => {
+          await replacementGate.promise;
+          return "replacement";
+        },
+        { sessionTarget: { agentId: "replacement", sessionId: "replacement" } },
+      );
       const replacementState = lanes.get(lane);
 
       staleGate.resolve();
       await expect(staleRun).resolves.toBe("stale");
       expect(lanes.get(lane)).toBe(replacementState);
       expect(getCommandLaneSnapshot(lane)).toMatchObject({ activeCount: 1, queuedCount: 0 });
+      expect(getQueueSize(lane, (target) => target?.agentId === "stale")).toBe(0);
+      expect(getQueueSize(lane, (target) => target?.agentId === "replacement")).toBe(1);
 
       replacementGate.resolve();
       await expect(replacementRun).resolves.toBe("replacement");
@@ -946,16 +979,8 @@ describe("command queue", () => {
         await staleGate.promise;
         return "stale";
       });
-      const replacementState = {
-        lane,
-        queue: createLaneQueue(),
-        activeTaskIds: new Set<number>(),
-        maxConcurrent: 1,
-        draining: false,
-        generation: 0,
-      } satisfies LaneState;
-
-      lanes.set(lane, replacementState);
+      lanes.delete(lane);
+      const replacementState = getLaneState(lane);
       staleGate.resolve();
       await expect(staleRun).resolves.toBe("stale");
 
