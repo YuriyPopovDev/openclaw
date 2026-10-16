@@ -1,8 +1,12 @@
 import path from "node:path";
+import { saveMediaBuffer } from "openclaw/plugin-sdk/media-store";
+import { createSolidPngBuffer } from "openclaw/plugin-sdk/test-fixtures";
 import { describe, expect, it, vi } from "vitest";
 import { attemptTerminal } from "./attempt-terminal.js";
+import type { CodexUserInput } from "./protocol.js";
 import {
   assistantMessage,
+  bindProductionHarnessHostCapabilitiesForTest,
   setupRunAttemptTestHooks,
   tempDir,
   threadStartResult,
@@ -149,6 +153,105 @@ describe("Codex fresh bootstrap delivery", () => {
       } else {
         expect(retryInput).toContain(goal);
         expect(retryInput).toContain(checksum);
+      }
+    },
+  );
+
+  it.each([false, true])(
+    "resumes accepted bootstrap history for two follow-ups (historical image: %s)",
+    async (withImage) => {
+      const params = bootstrapParams();
+      params.model = { ...params.model, input: ["text", "image"] };
+      const png = createSolidPngBuffer(1, 1, { r: 0, g: 0, b: 255 });
+      const savedImage = withImage
+        ? await saveMediaBuffer(png, "image/png", "inbound", undefined, "history.png")
+        : undefined;
+      const historical = {
+        ...userMessage(goal, 10),
+        ...(savedImage
+          ? {
+              __openclaw: {
+                media: [
+                  {
+                    url: `media://inbound/${savedImage.id}`,
+                    contentType: "image/png",
+                    fileName: "history.png",
+                  },
+                ],
+                mediaImageLayout: { slots: [{ kind: "offloaded" as const, factIndex: 0 }] },
+              },
+            }
+          : {}),
+      };
+      params.contextEngine = createContextEngine({
+        assemble: vi.fn(async () => ({
+          messages: [historical, assistantMessage(checksum, 11)],
+          estimatedTokens: 64,
+          contextProjection: { mode: "thread_bootstrap" as const, epoch: "epoch-1" },
+        })),
+      });
+      const closeHost = await bindProductionHarnessHostCapabilitiesForTest(params);
+      try {
+        for (let turn = 0; turn < 3; turn++) {
+          const binding = await readCodexAppServerBinding(params.sessionFile);
+          const harness = createStartedThreadHarness(
+            async (method) => {
+              if (method === "thread/start") {
+                return threadStartResult(`thread-turn-${turn}`);
+              }
+              if (method === "thread/resume") {
+                return threadStartResult(binding!.threadId);
+              }
+              return undefined;
+            },
+            { persistedThreads: binding ? [binding.threadId] : [] },
+          );
+          try {
+            const prompt = `Follow-up request ${turn}`;
+            const result = await completeAcceptedRun(
+              harness,
+              runCodexAppServerAttempt({ ...params, runId: `image-bootstrap-${turn}`, prompt }),
+            );
+            expect(attemptTerminal.project(result.terminal).promptError).toBeNull();
+            const request = harness.requests.find(({ method }) => method === "turn/start");
+            const { input, threadId } = request!.params as {
+              input: CodexUserInput[];
+              threadId: string;
+            };
+            expect.soft(threadId).toBe("thread-turn-0");
+            expect
+              .soft(
+                (await readCodexAppServerBinding(params.sessionFile))?.contextEngine?.projection
+                  ?.epoch,
+              )
+              .toBe("epoch-1");
+            expect
+              .soft(harness.requests.filter(({ method }) => method === "thread/start"))
+              .toHaveLength(turn === 0 ? 1 : 0);
+            expect
+              .soft(harness.requests.filter(({ method }) => method === "thread/resume"))
+              .toHaveLength(turn === 0 ? 0 : 1);
+            if (turn === 0) {
+              expect(getRequestInputText(harness)).toContain(goal);
+              expect(getRequestInputText(harness)).toContain(checksum);
+              expect(input.map((item) => item.type)).toEqual(
+                withImage ? ["text", "image", "text"] : ["text"],
+              );
+              if (withImage) {
+                expect(input[1]).toEqual({
+                  type: "image",
+                  url: `data:image/png;base64,${png.toString("base64")}`,
+                });
+              }
+            } else {
+              expect.soft(input).toEqual([{ type: "text", text: prompt, text_elements: [] }]);
+            }
+          } finally {
+            await harness.client.closeAndWait();
+          }
+        }
+      } finally {
+        closeHost();
       }
     },
   );

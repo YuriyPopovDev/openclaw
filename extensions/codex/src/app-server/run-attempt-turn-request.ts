@@ -300,7 +300,11 @@ export async function prepareCodexAttemptTurnRequest(
       !selectedThread.lifecycle.preserveExistingBinding &&
       selectedThread.contextEngine?.projection &&
       bootstrapPrompt !== undefined &&
-      upstreamUserText.includes(bootstrapPrompt)
+      turnStartParams.input
+        .flatMap((item) => (item.type === "text" ? [item.text] : []))
+        // Historical images split contiguous slices of the same bootstrap prompt.
+        .join("")
+        .includes(bootstrapPrompt)
         ? selectedThread.contextEngine
         : undefined;
     try {
