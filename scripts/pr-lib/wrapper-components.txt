@@ -360,6 +360,7 @@ src/infra/database-engine/open.ts
 src/infra/database-engine/physical-facts.ts
 src/infra/database-engine/policy.ts
 src/infra/database-engine/postgres-catalog.ts
+src/infra/database-engine/postgres-schema.ts
 src/infra/postgres-sync/connection.ts
 src/infra/postgres-sync/protocol.ts
 src/infra/postgres-sync/transaction.ts
@@ -1537,6 +1538,7 @@ src/plugins/plugin-source-references.ts
 src/plugins/plugin-source-verification.ts
 src/plugins/portable-icon-paths.ts
 src/plugins/prepared-message-tool-catalog.ts
+src/plugins/provider-availability-policy.ts
 src/plugins/provider-config-owner.ts
 src/plugins/provider-model-routes.ts
 src/plugins/provider-owner-index.ts
@@ -1562,7 +1564,9 @@ src/plugins/runtime-state-key.ts
 src/plugins/runtime-state.ts
 src/plugins/runtime-workspace-state.ts
 src/plugins/runtime.ts
+src/plugins/sdk-deprecated-imports.ts
 src/plugins/sdk-deprecation.ts
+src/plugins/sdk-deprecation-usage.ts
 src/plugins/runtime/execution-frame.ts
 src/plugins/runtime/gateway-context-binding-owner.ts
 src/plugins/runtime/gateway-context-binding.ts
@@ -2205,6 +2209,7 @@ packages/memory-host-sdk/src/host/session-entry-projection.ts
 packages/memory-host-sdk/src/host/session-reset-recall.ts
 packages/memory-host-sdk/src/host/session-transcript-corpus-policy.ts
 packages/normalization-core/src/markdown-plain-text.ts
+packages/tool-call-repair/src/attempt.ts
 packages/tool-call-repair/src/contracts.ts
 packages/tool-call-repair/src/grammar.ts
 packages/tool-call-repair/src/index.ts
