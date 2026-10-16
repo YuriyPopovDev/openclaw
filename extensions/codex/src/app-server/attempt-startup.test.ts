@@ -37,7 +37,10 @@ import { defaultCodexPluginMetadataCache } from "./plugin-metadata-cache.js";
 import { sandboxExecServerRegistry } from "./sandbox-exec-server-registry.js";
 import { releaseCodexSandboxExecServerEnvironment } from "./sandbox-exec-server.js";
 import { createSandboxContext } from "./sandbox-exec-server.test-helpers.js";
-import { resetCodexTestBindingStore } from "./session-binding.test-helpers.js";
+import {
+  resetCodexTestBindingStore,
+  testCodexAppServerBindingStore,
+} from "./session-binding.test-helpers.js";
 import {
   clearSharedCodexAppServerClientAndWait,
   createIsolatedCodexAppServerClient,
@@ -141,8 +144,21 @@ async function bindToRetiredLeasedOwner() {
     .mockResolvedValueOnce(healthy.client)
     .mockRejectedValue(new Error("unexpected replacement app-server"));
   const startOn = (harness: ClientHarness, signal?: AbortSignal, startupTimeoutMs = 5_000) =>
-    startThreadWithHarness(startupTimeoutMs, signal, { paths, harness, skipStartSpy: true }).run;
+    startThreadWithHarness(startupTimeoutMs, signal, {
+      paths,
+      harness,
+      skipStartSpy: true,
+      buildAttemptParams: () => ({ ...createAttemptParams(paths), disableTools: false }),
+    }).run;
   const bound = await startOn(owner);
+  expect(
+    testCodexAppServerBindingStore.read({
+      kind: "session",
+      agentId: "agent-1",
+      sessionId: "session-1",
+      sessionKey: "agent:agent-1:session-1",
+    }),
+  ).toMatchObject({ threadId: bound.thread.threadId });
   await owner.endTurn(bound.thread.threadId);
   bound.turnRoute.release();
   bound.releaseSharedClientLease();
